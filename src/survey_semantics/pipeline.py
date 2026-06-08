@@ -31,7 +31,7 @@ from survey_semantics.scales import ItemScale, resolve_scale
 class AnalysisConfig:
     """Configuration for semantic survey analysis."""
 
-    embedding: str = "auto"
+    embedding: str = "sentence-transformers"
     model_name: Optional[str] = None
     disable_network: bool = True
     compute_umap: bool = True

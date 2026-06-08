@@ -210,7 +210,7 @@ survey-semantics analyze-file data/NHIS/2021/nhis2021.csv \
   --max-components 0 \
   --outdir outputs/nhis/2021
 ```
-(and the same for 2024). `--embedding tfidf` for an offline smoke test. Use the
+(and the same for 2024). Use the
 single-file `--prompt-file`/`--scale-file` forms (not `--prompt-dir`/`--scale-dir`):
 the year folder also holds the raw `adultNN.csv`, which a directory loader would
 wrongly try to parse as a prompt/scale file.

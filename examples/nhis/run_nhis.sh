@@ -6,13 +6,13 @@
 # Prerequisites (NOT committed — NHIS data and the replication script are yours):
 #   - The replication script with ALL_QUESTION_TEXTS / ALL_ITEM_SCALES.
 #   - Raw adult CSVs: adult21.csv (2021) and adult24.csv (2024).
+#   - A LOCAL bge-m3 (sentence-transformers) model directory.
 #
 # Override any path via environment variables; defaults assume a gitignored
 # ./data/NHIS working dir at the repo root.
 #
 # Usage:
-#   examples/nhis/run_nhis.sh                 # bge-m3 if MODEL set, else tfidf
-#   EMBEDDING=tfidf examples/nhis/run_nhis.sh # force offline smoke test
+#   MODEL=/path/to/bge-m3 examples/nhis/run_nhis.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,16 +24,16 @@ ADULT21="${ADULT21:-$DATA_DIR/2021/adult21.csv}"
 ADULT24="${ADULT24:-$DATA_DIR/2024/adult24.csv}"
 OUTDIR="${OUTDIR:-$REPO/outputs/nhis}"
 
-# Embedding backend: a local bge-m3 path (MODEL=...) uses sentence-transformers;
-# otherwise fall back to the offline tfidf smoke test.
+# The only embedding backend is a local sentence-transformers model (e.g. bge-m3).
+# There is NO TF-IDF/offline fallback — the model must already be on local disk.
 MODEL="${MODEL:-}"
-if [[ -n "$MODEL" ]]; then
-  EMBEDDING="${EMBEDDING:-sentence-transformers}"
-  MODEL_ARGS=(--embedding "$EMBEDDING" --model "$MODEL")
-else
-  EMBEDDING="${EMBEDDING:-tfidf}"
-  MODEL_ARGS=(--embedding "$EMBEDDING")
+if [[ -z "$MODEL" ]]; then
+  echo "ERROR: set MODEL=/path/to/bge-m3 (a local sentence-transformers model)." >&2
+  echo "       There is no TF-IDF or auto fallback; the model must be on local disk." >&2
+  exit 1
 fi
+MODEL_ARGS=(--embedding sentence-transformers --model "$MODEL")
+EMBEDDING="sentence-transformers"
 
 echo "==> 1/3  Convert raw NHIS extracts -> tool-ready per-year files"
 python "$HERE/convert_nhis.py" \

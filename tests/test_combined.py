@@ -54,7 +54,6 @@ class CombinedPackageTests(unittest.TestCase):
             result = analyze_survey_table(
                 combined.table,
                 AnalysisConfig(
-                    embedding="tfidf",
                     compute_umap=False,
                     min_rows=5,
                     min_items=5,

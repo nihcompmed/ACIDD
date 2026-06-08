@@ -55,7 +55,7 @@ yield the same basis).
        │            └──────┬───────┘                                       │
        ▼                   │                                               │
   ┌─────────┐              │                                               │
-  │7. embed │  item text → vectors (bge-m3 / tfidf)                        │
+  │7. embed │  item text → vectors (local bge-m3 sentence encoder)         │
   │ prompts │              │                                               │
   └────┬────┘              │                                               │
        ▼                   │                                               │
@@ -100,7 +100,7 @@ Here the space is the **PCA of the question wording's embeddings** — so:
 | [`io.py`](../src/survey_semantics/io.py) | 290 | Read survey tables (generic + NDA dictionary-row format); coerce responses to numeric; infer item columns; clean sentinels; build covariate matrix. | All the messy "turn a CSV into clean numeric arrays" logic in one place. |
 | [`prompts.py`](../src/survey_semantics/prompts.py) | 286 | Load item **wording** from CSV/JSON/Python-dict/dir; namespaced key resolution (`table__item` → bare → normalized). | Prompt text is the raw material for the semantic space; must match items robustly across naming styles. |
 | [`scales.py`](../src/survey_semantics/scales.py) | 343 | Load per-item **scale specs** (`min,max,sentinels,reverse`); same namespacing as prompts. *(Part 1, new.)* | Lets the tool know each item's valid range, its own missing-value codes, and reverse coding — things it otherwise has to guess from data. |
-| [`embedding.py`](../src/survey_semantics/embedding.py) | 196 | Turn item text into vectors via `tfidf` or `sentence-transformers` (e.g. bge-m3); enforce offline policy. | The semantic step; backend-swappable so an offline tfidf smoke test and a real bge-m3 run share one interface. |
+| [`embedding.py`](../src/survey_semantics/embedding.py) | ~150 | Turn item text into vectors via a local `sentence-transformers` model (e.g. bge-m3); enforce the offline policy. No fallback — a missing model raises. | The semantic step; isolated so the offline/network guards live in one place. |
 | [`pipeline.py`](../src/survey_semantics/pipeline.py) | 1108 | The core algorithm: `analyze_survey_table` (stages 2–13), dimension selection, residualization, Mahalanobis, stability, drivers, case studies, UMAP. | The heart — everything else feeds it clean inputs and serializes its outputs. |
 | [`combined.py`](../src/survey_semantics/combined.py) | 663 | Build a single transdiagnostic matrix across *many* questionnaire files (auto-reverse detection, item merging). | For the "many small instruments → one space" mode; not used for the per-year NHIS runs. |
 | [`plotting.py`](../src/survey_semantics/plotting.py) | 431 | Render PDF plots from the output CSVs. | Optional visualization, decoupled from analysis. |
@@ -191,21 +191,20 @@ python -m survey_semantics.cli analyze-file path/to/data.csv \
   --outdir outputs/<study>
 ```
 
-### Offline smoke test (no model download)
-Swap the embedding backend for tfidf:
-```bash
-  --embedding tfidf
-```
+> **Embedding backend.** The only supported backend is a local
+> `sentence-transformers` model (e.g. bge-m3); there is no TF-IDF/auto fallback.
+> The model must already be on local disk (the pipeline blocks network egress).
+> Tests use a deterministic fake encoder so they run without the model.
 
-### Worked example — NHIS 2021 (verified)
+### Worked example — NHIS 2021
 ```bash
 python -m survey_semantics.cli analyze-file data/NHIS/2021/nhis2021.csv \
   --prompt-file data/NHIS/2021/nhis2021_prompts.csv \
   --scale-file  data/NHIS/2021/nhis2021_scales.csv \
-  --id-col HHX --embedding tfidf \
+  --id-col HHX --embedding sentence-transformers --model /path/to/bge-m3 \
   --d-selection variance --variance-threshold 0.80 --max-components 0 \
   --skip-umap --outdir outputs/nhis/2021
-# → Analyzed nhis2021: 29372 rows, 38 items, D=19.
+# → Analyzed nhis2021: ... rows, 38 items, D=...
 ```
 With the scale file, all 38 declared items are kept; without it, item inference
 drops one (a valid item whose missing codes inflated its unique-value count).
@@ -248,7 +247,7 @@ dataset quirks isolated in small converters at the edge.
 
 ## 8. Status
 
-- **Done:** core pipeline; prompt loading; embeddings (tfidf + bge-m3); scale file
+- **Done:** core pipeline; prompt loading; embeddings (local bge-m3, no fallback); scale file
   end-to-end (`scales.py` + per-item sentinels + declared ranges + reverse), verified
   on NHIS 2021; weights file end-to-end (`--weights-file`, WLS residualization,
   weighted Mahalanobis), numerically matched to the NHIS script to 1e-9.

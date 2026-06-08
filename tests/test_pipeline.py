@@ -77,7 +77,6 @@ class PipelineTests(unittest.TestCase):
             result = analyze_survey_table(
                 table,
                 AnalysisConfig(
-                    embedding="tfidf",
                     compute_umap=False,
                     min_rows=5,
                     min_items=5,
@@ -88,8 +87,8 @@ class PipelineTests(unittest.TestCase):
 
             self.assertEqual(result.summary["n_rows"], 10)
             self.assertEqual(result.summary["n_items"], 5)
-            self.assertEqual(result.summary["embedding"], "tfidf")
-            self.assertIn("tfidf", result.summary["embedding_slug"])
+            self.assertEqual(result.summary["embedding"], "sentence-transformers")
+            self.assertIn("sentence-transformers", result.summary["embedding_slug"])
             self.assertIn("Mahalanobis_Dist", result.scores.columns)
             self.assertGreaterEqual(result.summary["optimal_d"], 1)
             self.assertIn("PC1", result.prompt_loadings.columns)
@@ -134,7 +133,6 @@ class PipelineTests(unittest.TestCase):
             result = analyze_survey_table(
                 read_survey_table(path),
                 AnalysisConfig(
-                    embedding="tfidf",
                     compute_umap=False,
                     min_rows=5,
                     min_items=5,

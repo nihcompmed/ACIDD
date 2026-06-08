@@ -86,10 +86,7 @@ so any other survey can be run the same way by writing its own converter. See
 The convenience script converts then runs both years:
 
 ```bash
-# Offline smoke test (lexical tfidf embedding, no model download):
-EMBEDDING=tfidf examples/nhis/run_nhis.sh
-
-# Real semantic embedding with a locally cached bge-m3:
+# Requires a local bge-m3 (sentence-transformers) model; there is no fallback.
 MODEL=/path/to/bge-m3 examples/nhis/run_nhis.sh
 ```
 

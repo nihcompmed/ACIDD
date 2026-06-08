@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from typing import Optional, Sequence
 
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import normalize
 
 
 @dataclass
@@ -36,46 +34,44 @@ _SOCKET_BLOCK_INSTALLED = False
 
 def embed_texts(
     texts: Sequence[str],
-    method: str = "auto",
+    method: str = "sentence-transformers",
     model_name: Optional[str] = None,
 ) -> np.ndarray:
-    """Embed item text with an optional transformer backend and TF-IDF fallback."""
+    """Embed item text with a local sentence-transformers model (e.g. bge-m3)."""
 
     return embed_texts_with_metadata(texts, method=method, model_name=model_name).vectors
 
 
 def embed_texts_with_metadata(
     texts: Sequence[str],
-    method: str = "auto",
+    method: str = "sentence-transformers",
     model_name: Optional[str] = None,
 ) -> EmbeddingResult:
-    """Embed item text and return provenance for output naming."""
+    """Embed item text and return provenance for output naming.
 
-    method = (method or "auto").lower()
+    The only supported backend is a local ``sentence-transformers`` model (e.g.
+    ``BAAI/bge-m3``). There is **no** automatic fallback: if the requested backend
+    is unknown, or the model cannot be loaded locally, this raises rather than
+    silently substituting a different (unvalidated) embedding method.
+    """
+
+    method = (method or "sentence-transformers").lower()
+    if method not in {"sentence-transformers", "sentence_transformers"}:
+        raise ValueError(
+            "Unsupported embedding backend {!r}. The only supported backend is "
+            "'sentence-transformers' (a local sentence encoder such as BAAI/bge-m3). "
+            "There is no automatic fallback.".format(method)
+        )
+
     requested_model = model_name or ""
-    if method in {"auto", "sentence-transformers", "sentence_transformers"}:
-        try:
-            resolved_model = model_name or "BAAI/bge-m3"
-            vectors = _sentence_transformer_embeddings(texts, resolved_model)
-            backend = "sentence-transformers"
-            return EmbeddingResult(
-                vectors=vectors,
-                backend=backend,
-                model_name=resolved_model,
-                requested_backend=method,
-                requested_model_name=requested_model,
-                slug=embedding_slug(backend, resolved_model),
-            )
-        except Exception:
-            if method != "auto":
-                raise
-    backend = "tfidf"
-    resolved_model = "word-1-2gram-max1024"
+    resolved_model = model_name or "BAAI/bge-m3"
+    vectors = _sentence_transformer_embeddings(texts, resolved_model)
+    backend = "sentence-transformers"
     return EmbeddingResult(
-        vectors=_tfidf_embeddings(texts),
+        vectors=vectors,
         backend=backend,
         model_name=resolved_model,
-        requested_backend=method,
+        requested_backend="sentence-transformers",
         requested_model_name=requested_model,
         slug=embedding_slug(backend, resolved_model),
     )
@@ -176,21 +172,3 @@ def block_outbound_sockets():
         socket.socket.connect = original_connect
         socket.socket.connect_ex = original_connect_ex
         socket.create_connection = original_create_connection
-
-
-def _tfidf_embeddings(texts: Sequence[str]) -> np.ndarray:
-    cleaned = [text if str(text).strip() else "item" for text in texts]
-    vectorizer = TfidfVectorizer(
-        lowercase=True,
-        stop_words="english",
-        ngram_range=(1, 2),
-        min_df=1,
-        max_features=1024,
-    )
-    try:
-        matrix = vectorizer.fit_transform(cleaned)
-    except ValueError:
-        vectorizer = TfidfVectorizer(lowercase=True, analyzer="char", ngram_range=(2, 4))
-        matrix = vectorizer.fit_transform(cleaned)
-    dense = matrix.toarray().astype(float)
-    return normalize(dense, norm="l2", axis=1)

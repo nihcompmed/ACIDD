@@ -51,7 +51,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Run the notebook-equivalent combined workflow from a prompt dictionary and data directory.",
     )
     _add_common_args(study_parser)
-    study_parser.add_argument("--embedding-model", required=True, help="Use 'tfidf' or a local sentence-transformers model name/path.")
+    study_parser.add_argument("--embedding-model", required=True, help="Local sentence-transformers model name/path (e.g. a bge-m3 path). No TF-IDF/auto fallback.")
     study_parser.add_argument("--data-dir", type=Path, required=True, help="Directory containing survey data files.")
     study_parser.add_argument("--include-regex", default=None)
     study_parser.add_argument("--exclude-regex", default=None)
@@ -83,8 +83,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--outdir", type=Path, required=True)
-    parser.add_argument("--embedding", default="auto", choices=["auto", "tfidf", "sentence-transformers"])
-    parser.add_argument("--model", default=None)
+    parser.add_argument(
+        "--embedding", default="sentence-transformers", choices=["sentence-transformers"],
+        help="Embedding backend. Only a local sentence-transformers model is supported; "
+             "there is no fallback.",
+    )
+    parser.add_argument(
+        "--model", default=None,
+        help="Local path or cached name of the sentence-transformers model (e.g. a bge-m3 path). "
+             "Required in practice — the model must already be on local disk (offline-only).",
+    )
     parser.add_argument("--prompt-file", type=Path, default=None)
     parser.add_argument("--prompt-dir", type=Path, default=None)
     parser.add_argument(
@@ -313,16 +321,14 @@ def _run_study(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
 
 def _apply_embedding_model_arg(args: argparse.Namespace) -> None:
     model = str(args.embedding_model).strip()
-    lower = model.lower()
-    if lower in {"tfidf", "tf-idf", "word-1-2gram-max1024"}:
-        args.embedding = "tfidf"
-        args.model = None
-    elif lower == "auto":
-        args.embedding = "auto"
-        args.model = None
-    else:
-        args.embedding = "sentence-transformers"
-        args.model = model
+    if model.lower() in {"tfidf", "tf-idf", "word-1-2gram-max1024", "auto"}:
+        raise SystemExit(
+            "Embedding backend {!r} is not supported. Pass a local sentence-transformers "
+            "model path or cached name (e.g. a bge-m3 path); there is no TF-IDF or auto "
+            "fallback.".format(model)
+        )
+    args.embedding = "sentence-transformers"
+    args.model = model
 
 
 def _write_result(result, outdir: Path, prefix: str) -> None:
