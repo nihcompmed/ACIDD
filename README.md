@@ -37,24 +37,70 @@ ignore_patterns=['onnx/**','openvino/**','*.onnx'])"
 
 ## Run
 
-Single table:
+You give the tool two things: a table of **responses** (one row per person) and
+the **wording of each question**. It returns a ranked list of people whose answers
+form an unusually different overall pattern.
+
+**One questionnaire.** Point it at the responses CSV and the question-wording CSV:
 
 ```bash
 survey-semantics analyze-file data.csv \
   --prompt-file prompts.csv \
   --embedding sentence-transformers --model models/bge-m3 \
-  --d-selection variance --max-components 0 \
   --outdir outputs/run
 ```
 
-Multi-instrument study (one data + one prompt file per instrument, in two dirs):
+**Several questionnaires together.** Put the response files in one folder and
+their wording files in another; the tool merges them into one shared space:
 
 ```bash
 survey-semantics run-study \
   --embedding-model models/bge-m3 \
   --data-dir study/data --prompt-dir study/prompts \
-  --d-selection variance --max-components 0 \
   --outdir outputs/study
+```
+
+The results go to `--outdir`. The ranking is in `*_scores.csv` — the larger the
+`Mahalanobis_Dist`, the more unusual the respondent. Add tuning flags (`--scale-file`,
+`--weights-file`, `--pan-mild`, `--d-selection`) from the tables below as needed.
+
+## Input files
+
+A few example rows of each. The item names in `data.csv` (`sad`, `sleep`,
+`worry`) match the `item` keys in the other files.
+
+`data.csv` — one row per person: an id, optional `age`/`sex`, then one column per item:
+
+```csv
+id,age,sex,sad,sleep,worry
+P001,42,F,1,3,2
+P002,67,M,5,1,4
+```
+
+`prompts.csv` — the wording of each item (this is what builds the semantic space):
+
+```csv
+item,prompt
+sad,How often do you feel sad?
+sleep,How often do you have trouble sleeping?
+worry,How often do you feel worried?
+```
+
+`scales.csv` *(optional)* — valid range, missing-value codes, reverse, ceiling:
+
+```csv
+item,min,max,sentinels,reverse,ceiling
+sad,1,5,7;8;9,false,true
+sleep,1,5,7;8;9,false,true
+worry,1,5,7;8;9,false,true
+```
+
+`weights.csv` *(optional)* — one survey weight per row, same order as `data.csv`:
+
+```csv
+weight
+1842.6
+903.1
 ```
 
 ## Inputs
