@@ -39,45 +39,38 @@ ignore_patterns=['onnx/**','openvino/**','*.onnx'])"
 
 You give the tool two things: a table of **responses** (one row per person) and
 the **wording of each question**. It returns a ranked list of people whose answers
-form an unusually different overall pattern.
+form an unusually different overall pattern across all the questions.
 
-**One questionnaire.** Point it at the responses CSV and the question-wording CSV:
+**General case.** Put every item — from one questionnaire or several — as columns
+in one responses table, alongside the wording of each item. The tool builds one
+shared semantic space across all of them and ranks unusual respondents:
 
 ```bash
-survey-semantics analyze-file data.csv \
+survey-semantics analyze-file responses.csv \
   --prompt-file prompts.csv \
   --embedding sentence-transformers --model models/bge-m3 \
   --outdir outputs/run
 ```
 
-**Several questionnaires together.** Put the response files in one folder and
-their wording files in another; the tool merges them into one shared space:
+If your questionnaires are in separate files instead of one table, use
+`run-study --data-dir <dir> --prompt-dir <dir>` to merge them automatically.
 
-```bash
-survey-semantics run-study \
-  --embedding-model models/bge-m3 \
-  --data-dir study/data --prompt-dir study/prompts \
-  --outdir outputs/study
-```
+**Advanced — longitudinal / multiple waves.** When you compare waves whose item
+sets differ (e.g. NHIS 2021 vs 2024), restrict to the items common to both so they
+share the same semantic space, then run each wave and compare. See the
+[NHIS example](examples/nhis/README.md).
 
 The results go to `--outdir`. The ranking is in `*_scores.csv` — the larger the
-`Mahalanobis_Dist`, the more unusual the respondent. Add tuning flags (`--scale-file`,
-`--weights-file`, `--pan-mild`, `--d-selection`) from the tables below as needed.
+`Mahalanobis_Dist`, the more unusual the respondent. Add tuning flags
+(`--scale-file`, `--weights-file`, `--pan-mild`, `--d-selection`) as needed.
 
 ## Input files
 
-A few example rows of each. The item names in `data.csv` (`sad`, `sleep`,
-`worry`) match the `item` keys in the other files.
+A few example rows of each, in the order the method uses them: it **embeds the
+prompts first** to build the semantic space, then **projects the responses** into
+it. The `item` keys tie the files together (`sad`, `sleep`, `worry`).
 
-`data.csv` — one row per person: an id, optional `age`/`sex`, then one column per item:
-
-```csv
-id,age,sex,sad,sleep,worry
-P001,42,F,1,3,2
-P002,67,M,5,1,4
-```
-
-`prompts.csv` — the wording of each item (this is what builds the semantic space):
+**1. `prompts.csv`** — the wording of each item; this builds the semantic space:
 
 ```csv
 item,prompt
@@ -86,7 +79,16 @@ sleep,How often do you have trouble sleeping?
 worry,How often do you feel worried?
 ```
 
-`scales.csv` *(optional)* — valid range, missing-value codes, reverse, ceiling:
+**2. `responses.csv`** — one row per person: an id, optional `age`/`sex`, then one
+column per item (items from all your questionnaires go side by side):
+
+```csv
+id,age,sex,sad,sleep,worry
+P001,42,F,1,3,2
+P002,67,M,5,1,4
+```
+
+**3. `scales.csv`** *(optional)* — valid range, missing-value codes, reverse, ceiling:
 
 ```csv
 item,min,max,sentinels,reverse,ceiling
@@ -95,7 +97,7 @@ sleep,1,5,7;8;9,false,true
 worry,1,5,7;8;9,false,true
 ```
 
-`weights.csv` *(optional)* — one survey weight per row, same order as `data.csv`:
+**4. `weights.csv`** *(optional)* — one survey weight per row, same order as `responses.csv`:
 
 ```csv
 weight
