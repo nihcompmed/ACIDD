@@ -205,7 +205,7 @@ survey-semantics analyze-file data/NHIS/2021/nhis2021.csv \
   --scale-file   data/NHIS/2021/nhis2021_scales.csv \
   --weights-file data/NHIS/2021/nhis2021_weights.csv \
   --id-col       HHX \
-  --embedding-model BAAI/bge-m3 \
+  --embedding sentence-transformers --model /path/to/bge-m3 \
   --d-selection variance --variance-threshold 0.80 \
   --max-components 0 \
   --outdir outputs/nhis/2021

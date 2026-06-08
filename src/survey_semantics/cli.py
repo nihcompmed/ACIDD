@@ -189,6 +189,20 @@ def _config_from_args(args: argparse.Namespace) -> AnalysisConfig:
 
 
 def _analyze_file(args: argparse.Namespace) -> int:
+    if not (args.scale_file or args.scale_dir):
+        raise SystemExit(
+            "A scale file is required: pass --scale-file (or --scale-dir). It carries "
+            "the per-item reverse flag, valid range, and missing-value codes that the "
+            "method needs (reverse-scoring is part of the method). Running without it "
+            "would silently skip reverse-scoring and guess ranges from the data."
+        )
+    if not args.weights_file:
+        raise SystemExit(
+            "A weights file is required: pass --weights-file (one weight per response "
+            "row). For an unweighted analysis, supply a column of equal weights (e.g. all "
+            "1s) — equal weights give the same outlier ranking and empirical outlier set "
+            "as the unweighted method (distances differ only by a negligible constant)."
+        )
     args.outdir.mkdir(parents=True, exist_ok=True)
     prompts = load_prompt_sources(args.prompt_file, args.prompt_dir)
     table = read_survey_table(args.path, prompt_dictionary=prompts)

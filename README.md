@@ -9,7 +9,7 @@ each flag back to the original items.
 
 > Validated in the paper on the **HRS** and **Xinxiang** cohorts. This package
 > generalizes the method to any subjects×items survey; the worked example applies
-> it to **NHIS 2021/2024** and adds optional survey weights.
+> it to **NHIS 2021/2024** and adds survey weighting.
 
 **Full docs:** [docs/pipeline_overview.md](docs/pipeline_overview.md) — how it
 works, file formats, every option. · [examples/nhis](examples/nhis/README.md) —
@@ -61,33 +61,46 @@ P001,42,F,1,3,2
 P002,67,M,5,1,4
 ```
 
-**3. Run it** (needs a local bge-m3 model — see above):
+**3. `scales.csv`** *(required)* — per-item valid range, missing-value codes,
+`reverse` flag, and (optional) `ceiling`. Reverse-scoring is part of the method,
+so this file is mandatory (set `reverse` to `false` for items that don't need it):
+
+```csv
+item,min,max,sentinels,reverse,ceiling
+sad,1,5,7;8;9,false,true
+sleep,1,5,7;8;9,false,true
+worry,1,5,7;8;9,false,true
+```
+
+**4. `weights.csv`** *(required)* — one survey weight per row, in the same order as
+`responses.csv`. For an **unweighted** analysis (as in the paper), use a column of
+equal weights (e.g. all `1`s) — equal weights give the same outlier ranking and
+empirical outlier set as the unweighted method:
+
+```csv
+weight
+1842.6
+903.1
+```
+
+**5. Run it** (needs a local bge-m3 model — see above):
 
 ```bash
 survey-semantics analyze-file responses.csv \
-  --prompt-file prompts.csv \
+  --prompt-file   prompts.csv \
+  --scale-file    scales.csv \
+  --weights-file  weights.csv \
   --embedding sentence-transformers --model models/bge-m3 \
   --outdir outputs/run
 ```
 
-**4. Read the result.** Everything lands in `outputs/run/`; the ranking is
+**6. Read the result.** Everything lands in `outputs/run/`; the ranking is
 `*_scores.csv` — the larger a person's `Mahalanobis_Dist`, the more unusual they are.
 
 ### Optional refinements
 
-Add a flag + file to refine the run; omit them and behavior is unchanged.
-
-- **`--scale-file scales.csv`** — per-item valid range, missing-value codes, reverse, and (optional) ceiling. Declares the analyzed items and cleans each item's own missing codes:
-  ```csv
-  item,min,max,sentinels,reverse,ceiling
-  sad,1,5,7;8;9,false,true
-  ```
-- **`--weights-file weights.csv`** — one survey weight per row (same order as `responses.csv`) → weighted residualization + Mahalanobis:
-  ```csv
-  weight
-  1842.6
-  ```
-- **`--pan-mild`** — also flag below-ceiling outliers. **`--d-selection`** — choose the dimension rule (`variance` default, `eigengap`, `parallel`, `stability`, `max`).
+- **`--pan-mild`** — also flag below-ceiling outliers (adds `At_Ceiling`, `Is_Pan_Mild_Emp<pct>`).
+- **`--d-selection`** — choose the dimension rule (`variance` default, `eigengap`, `parallel`, `stability`, `max`).
 
 Full file formats and options: [docs/pipeline_overview.md](docs/pipeline_overview.md).
 
