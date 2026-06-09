@@ -1,0 +1,227 @@
+Metadata-Version: 2.4
+Name: survey-semantics
+Version: 0.1.0
+Summary: Semantic manifold analysis tools for survey item response data.
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+Requires-Dist: numpy<1.22,>=1.17
+Requires-Dist: pandas<1.4,>=1.0
+Requires-Dist: scikit-learn<1.1,>=0.22
+Requires-Dist: scipy<1.8,>=1.3.1
+Requires-Dist: matplotlib<3.6,>=3.5
+Provides-Extra: sentence-transformers
+Requires-Dist: sentence-transformers<6,>=2.2; extra == "sentence-transformers"
+Requires-Dist: transformers<5,>=4.20; extra == "sentence-transformers"
+Requires-Dist: huggingface-hub<1,>=0.10; extra == "sentence-transformers"
+Provides-Extra: umap
+Requires-Dist: umap-learn==0.4.6; extra == "umap"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+
+# Survey Semantics
+
+This repository factors the notebook workflow into a reusable Python tool for semantic analysis of survey data. The notebook is provenance only; it is not modified and is not required at runtime.
+
+The package keeps the notebook's main methodological spine:
+
+- embed survey item wording,
+- center and reduce item embeddings with PCA,
+- normalize respondent item responses,
+- project responses into the semantic item manifold,
+- optionally residualize covariates such as age or sex,
+- score multivariate deviation with Ledoit-Wolf Mahalanobis distance,
+- export ranked semantic outliers, item/component loadings, stability diagnostics, and case drivers.
+
+The original notebook remains unchanged as provenance. New reusable code lives in `src/survey_semantics`.
+
+## Quick Start
+
+Create or update a local environment:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Or with conda:
+
+```bash
+conda env create -f environment.yml
+conda activate survey-semantics
+```
+
+Run the notebook-equivalent common-space workflow:
+
+```bash
+survey-semantics run-study \
+  --embedding-model BAAI/bge-m3 \
+  --prompt-dir /path/to/study/prompts \
+  --data-dir /path/to/study/data \
+  --d-selection variance \
+  --outdir outputs/my-study \
+  --max-components 0
+```
+
+The four core inputs are:
+
+- `--embedding-model`: use `tfidf` for the local lexical fallback, or a locally cached/local-path sentence-transformers model such as `BAAI/bge-m3`.
+- `--prompt-dir` or `--prompt-file`: a directory of per-instrument prompt files, or one combined prompt registry.
+- `--data-dir`: directory containing the survey data tables.
+- `--d-selection`: semantic PC count rule used for scoring; choose `variance`, `eigengap`, `parallel`, `stability`, or `max`/`all`.
+
+The preferred study layout is one data file and one prompt file per instrument:
+
+```text
+study/
+  data/
+    instrument_a.csv
+    instrument_b.tsv
+    instrument_c.csv
+  prompts/
+    instrument_a_prompts.csv
+    instrument_b_prompts.csv
+    instrument_c_prompts.csv
+```
+
+The data filename stem is the instrument name. For example, column `q1` in `instrument_a.csv` becomes feature `instrument_a__q1` in combined mode. Prompt files in `--prompt-dir` use the same convention: bare `item` keys inside `instrument_a_prompts.csv` are automatically namespaced as `instrument_a__item`, so repeated item names across instruments do not collide.
+
+The command writes CSV outputs, anonymized case-study `.txt` files, and PDF plots in one pass.
+
+Prompt files can be CSV/TSV files with `prompt` plus either `item`, `feature`, or `table,item` columns:
+
+```csv
+item,prompt
+item_1,Prompt text for item 1
+item_2,Prompt text for item 2
+```
+
+They can also be copied from notebook code as a Python literal dictionary:
+
+```python
+{
+  "instrument_a__item_1": "Prompt text for item 1",
+  "item_2": "Prompt text for item 2"
+}
+```
+
+For a single combined `--prompt-file`, use fully qualified `table,item` or `table__item` keys when possible:
+
+```csv
+table,item,prompt
+instrument_a,item_1,Prompt text for item 1
+```
+
+If both `--prompt-dir` and `--prompt-file` are provided, the directory is loaded first and the single prompt file is applied second as an override layer.
+
+Combined mode embeds prompts from every viable questionnaire in one common semantic space, fits one PCA basis on that common prompt space, aggregates each subject's available responses across all questionnaires, and scores transdiagnostic outliers from the combined response vector.
+
+The lower-level commands remain available when useful:
+
+- `survey-semantics analyze-file path/to/table.tsv --outdir outputs/table --prompt-file prompts.txt`
+- `survey-semantics analyze-package /path/to/data --outdir outputs/by-table --prompt-dir prompts/`
+- `survey-semantics analyze-package-combined /path/to/data --outdir outputs/combined --prompt-dir prompts/`
+
+Reverse-polarity handling has two layers. First, the combined builder checks each instrument for strong within-instrument anticorrelation. When two item responses are strongly anticorrelated for enough of the same subjects, the tool treats that as an opposite-polarity warning, explicitly negates one polarity group, and writes both `combined_auto_reverse_warnings.txt` and `combined_auto_reverse_warnings.csv`. Because anticorrelation identifies opposite polarity but not absolute clinical direction, this is an auditable heuristic: manual config wins when present; otherwise the smaller polarity group is negated, with one-vs-one ties keeping the earlier item as the anchor.
+
+Use these options to tune or disable that pass:
+
+```bash
+--auto-reverse-corr-threshold 0.70
+--auto-reverse-min-pairwise-subjects 10
+--auto-reverse-min-pairwise-fraction 0.50
+--no-auto-reverse
+```
+
+Second, provide a manual CSV for known reverse-scored items:
+
+```csv
+table,item,reverse
+srs02,parentreport_3,true
+```
+
+or use the fully qualified feature name:
+
+```csv
+feature,reverse
+srs02__parentreport_3,true
+```
+
+Then run:
+
+```bash
+survey-semantics analyze-package-combined /path/to/data \
+  --outdir outputs/combined \
+  --embedding sentence-transformers \
+  --model BAAI/bge-m3 \
+  --prompt-dir prompts/ \
+  --reverse-config reverse_items.csv
+```
+
+The combined output writes `combined_prompt_inventory.csv`, which is the file to review/edit when deciding which items require manual reversal. It includes `reverse_scored` and `reverse_source`, so automatically inferred items are distinguishable from manual items.
+
+Create or regenerate PDF plots from an output folder:
+
+```bash
+survey-semantics-plot outputs/my-study --outdir outputs/my-study/plots
+```
+
+The sentence-transformers backend is local-only by design. The code sets `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_DATASETS_OFFLINE=1`, disables Hugging Face telemetry, installs a process-wide outbound socket blocker during analysis, and loads models with `local_files_only=True`. If the model is not already local, the run fails instead of downloading or calling Hugging Face. You can pass `--model /absolute/path/to/local/model` to avoid relying on a cache location. For institutional compliance, run this in an OS/container environment with network egress disabled too; the package guard prevents accidental Python-level calls, while the OS policy is the final perimeter.
+
+The `auto` embedding mode tries local sentence-transformers first and falls back to TF-IDF when the model is unavailable.
+Every output filename includes the actual embedding backend/model slug, for example `rbs_r02__tfidf__word-1-2gram-max1024_scores.csv` or `rbs_r02__sentence-transformers__BAAI_bge-m3_scores.csv`. The summary also records both the requested embedding choice and the actual embedding backend/model used.
+
+`tfidf` is a fully local scikit-learn fallback, not a neural semantic model. It uses `TfidfVectorizer` on prompt text with English stop-word removal, word unigrams/bigrams, and up to 1024 text features, then L2-normalizes those prompt vectors. This is useful for smoke tests and offline operation without a local transformer model, but it captures lexical overlap rather than deep semantic similarity.
+
+PCA component signs are arbitrary: a valid PCA solution can flip any PC vector without changing explained variance, Mahalanobis distances, or outlier rankings. Treat PC magnitudes, such as `|z|`, as the stable severity diagnostic. Signed PC scores and prompt loadings are still useful within a fixed run because they preserve the geometric pattern of subjects and prompts in the fitted PC orientation; they should not be read as fixed clinical direction unless a separate anchoring convention is added.
+
+By default, the selected semantic dimension `D` is the first PC count whose cumulative prompt-embedding variance reaches `--variance-threshold`. If the threshold is not reached within `--max-components`, the variance rule uses `D=--max-components` and records `variance_threshold_reached=False` in the summary. Use `--max-components 0` to evaluate all possible prompt PCs.
+
+Each run also reports several D-choice diagnostics in parallel, and `--d-selection` chooses which one is used for the actual Mahalanobis scores:
+
+- cumulative variance threshold with max-component fallback,
+- largest adjacent eigengap ratio `lambda_D / lambda_{D+1}`,
+- Horn-style parallel analysis against independently permuted embedding dimensions,
+- neighboring-D outlier-set stability via Jaccard overlap.
+- max/all evaluated prompt PCs.
+
+Use `--d-null-permutations`, `--d-null-percentile`, `--stability-jaccard-threshold`, and `--stability-consecutive` to tune these diagnostics.
+
+## Output Files
+
+For every analyzed table, the CLI writes:
+
+- `<table>__<embedding>_scores.csv`: row-level Mahalanobis scores, semantic PCs, ranks, and outlier flags.
+- `<table>__<embedding>_prompt_loadings.csv`: prompt/item wording loadings on the variance-selected semantic PC components.
+- `<table>__<embedding>_item_weights.csv`: compatibility alias for the prompt loading table.
+- `<table>__<embedding>_drivers.csv`: top semantic components/items driving the most extreme cases.
+- `<table>__<embedding>_stability.csv`: outlier count and Jaccard retention across component counts.
+- `<table>__<embedding>_dimension_selection.csv`: per-D variance, eigengap, parallel-analysis null, and outlier-stability evidence.
+- `<table>__<embedding>_dimension_methods.csv`: side-by-side D choices from the supported stopping rules.
+- `<table>__<embedding>_raw_response_umap.csv`: UMAP coordinates fit directly on normalized raw item responses, without semantic embedding.
+- `<table>__<embedding>_semantic_pc_umap.csv`: UMAP coordinates fit on semantic PC response scores using the variance-selected subspace.
+- `case_studies/<table>__<embedding>_rankNNN_outlier_NNN.txt`: one standalone anonymized case-study report per top outlier.
+- `<table>__<embedding>_case_study_label_map.csv`: private mapping from case-study `Outlier #N` labels back to subject identifiers.
+- `combined_prompt_inventory.csv`: combined-mode prompt inventory, including reverse-scoring source.
+- `combined_auto_reverse_warnings.txt` and `combined_auto_reverse_warnings.csv`: combined-mode audit trail for automatic opposite-polarity interpretations.
+- `summary.csv`: one package-level summary row per scanned table.
+- `<embedding>_summary.csv`: embedding-specific copy of the summary, so multiple model runs can share an output folder.
+
+The plotting script writes:
+
+- `<table>__<embedding>_variance_jaccard.pdf`: semantic variance, neighboring-D Jaccard, and outlier count across D.
+- `<table>__<embedding>_raw_response_umap.pdf`: UMAP from normalized raw item responses.
+- `<table>__<embedding>_semantic_pc_umap.pdf`: UMAP from variance-selected semantic PC response scores.
+- `<table>__<embedding>_pc_z_heatmap.pdf`: outlier subjects by signed semantic PC z-scores. Use `--absolute-heatmap` for a magnitude-only view.
+- `<table>__<embedding>_outlier_label_map.csv`: private mapping from anonymized plot labels such as `Outlier #1` back to subject identifiers. PDFs use only anonymized outlier labels.
+
+Use `--skip-umap` to run only the semantic PCA/Mahalanobis outputs when `umap-learn` is not installed.
+In this Python 3.7 Anaconda stack, bare `import umap` can trip a numba cache-locator error. The package imports UMAP through an internal shim that disables numba function caching while keeping JIT enabled, so run UMAP through `survey_semantics` rather than importing `umap` directly in notebooks.
+
+## Repository Layout
+
+```text
+src/survey_semantics/   reusable package
+tests/                  unit tests for IO and core analysis
+scripts/                convenience scripts
+docs/                   refactor notes
+examples/               prompt-file templates
+```

@@ -109,6 +109,46 @@ class PipelineTests(unittest.TestCase):
             self.assertNotIn("S1", first_report)
             self.assertTrue(all("outlier" in filename for filename in result.case_studies))
 
+    def test_embed_column_restricts_analyzed_item_set(self):
+        # Six declared items; the scale file marks one embed=false. Only the five
+        # embed=true items must be analyzed (embed=false is documented, excluded).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "survey.tsv"
+            lines = [
+                ["subjectkey", "interview_age", "sex", "sad", "sleep", "worry", "focus", "social", "height"],
+                ["GUID", "Age in months", "Sex", "Feels sad", "Trouble sleeping",
+                 "Worries too much", "Trouble focusing", "Avoids social contact", "Body height"],
+            ]
+            rng = np.random.default_rng(0)
+            rows = [["S{}".format(i), str(100 + i), "M" if i % 2 else "F"]
+                    + [str(int(v)) for v in rng.integers(0, 3, size=6)]
+                    for i in range(12)]
+            path.write_text("\n".join("\t".join(r) for r in lines + rows), encoding="utf-8")
+
+            scale_path = Path(tmpdir) / "survey_scales.csv"
+            scale_path.write_text(
+                "item,min,max,sentinels,reverse,embed\n"
+                "sad,0,2,,false,true\n"
+                "sleep,0,2,,false,true\n"
+                "worry,0,2,,false,true\n"
+                "focus,0,2,,false,true\n"
+                "social,0,2,,false,true\n"
+                "height,0,2,,false,false\n",  # documented but excluded
+                encoding="utf-8",
+            )
+            from survey_semantics.scales import load_scale_sources
+            table = read_survey_table(path)
+            result = analyze_survey_table(
+                table,
+                AnalysisConfig(
+                    compute_umap=False, min_rows=5, min_items=5, max_components=5,
+                    covariates=["interview_age", "sex"],
+                    item_scales=load_scale_sources(scale_file=scale_path),
+                ),
+            )
+            self.assertEqual(result.summary["n_items"], 5)
+            self.assertNotIn("height", set(result.item_weights["item"]))
+
     def test_max_d_selection_uses_all_evaluated_components(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "survey.tsv"

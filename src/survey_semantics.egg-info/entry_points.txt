@@ -1,0 +1,3 @@
+[console_scripts]
+survey-semantics = survey_semantics.cli:main
+survey-semantics-plot = survey_semantics.plotting:main

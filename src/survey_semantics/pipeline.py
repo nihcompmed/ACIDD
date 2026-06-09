@@ -25,7 +25,12 @@ from survey_semantics.io import (
     default_id_column,
     infer_item_columns,
 )
-from survey_semantics.scales import ItemScale, resolve_scale
+from survey_semantics.scales import (
+    ItemScale,
+    is_item_embedded,
+    resolve_scale,
+    scales_use_embed,
+)
 
 
 @dataclass
@@ -292,10 +297,15 @@ def analyze_survey_table(
         # Declared items take the place of inference: an item is analyzed iff a
         # scale was declared for it and the column exists in the data. This
         # avoids NHIS-style sentinel codes (7/8/9) inflating the unique-value
-        # count and wrongly dropping valid items.
+        # count and wrongly dropping valid items. When the scale file declares an
+        # `embed` column, it is an explicit allowlist: only embed=true items are
+        # analyzed (embed=false items stay documented but excluded).
+        uses_embed = scales_use_embed(config.item_scales)
         item_columns = [
             col for col in table.data.columns
-            if resolve_scale(config.item_scales, table.name, col) is not None
+            if is_item_embedded(
+                resolve_scale(config.item_scales, table.name, col), uses_embed
+            )
         ]
     else:
         item_columns = list(infer_item_columns(

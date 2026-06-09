@@ -62,15 +62,21 @@ P002,67,M,5,1,4
 ```
 
 **3. `scales.csv`** *(required)* — per-item valid range, missing-value codes,
-`reverse` flag, and (optional) `ceiling`. Reverse-scoring is part of the method,
-so this file is mandatory (set `reverse` to `false` for items that don't need it):
+`reverse` flag, and optional `ceiling` / `embed`. Reverse-scoring is part of the
+method, so this file is mandatory (set `reverse` to `false` for items that don't
+need it):
 
 ```csv
-item,min,max,sentinels,reverse,ceiling
-sad,1,5,7;8;9,false,true
-sleep,1,5,7;8;9,false,true
-worry,1,5,7;8;9,false,true
+item,min,max,sentinels,reverse,ceiling,embed
+sad,1,5,7;8;9,false,true,true
+sleep,1,5,7;8;9,false,true,true
+worry,1,5,7;8;9,false,true,true
 ```
+
+The optional **`embed`** column is an item-selection allowlist: when present, only
+`embed=true` rows are embedded and analyzed, and `embed=false` rows stay in the
+file as documentation but are excluded. Omit the column to analyze every declared
+item. (Useful for auditably curating a large cross-instrument item pool.)
 
 **4. `weights.csv`** *(required)* — one survey weight per row, in the same order as
 `responses.csv`. For an **unweighted** analysis (as in the paper), use a column of
@@ -110,13 +116,15 @@ Full file formats and options: [docs/pipeline_overview.md](docs/pipeline_overvie
   embedding depends only on the prompts, not the responses, so you can run the
   model once and reuse the result:
   ```bash
-  survey-semantics embed --prompt-file prompts.csv --model models/bge-m3 --out items.npz
+  survey-semantics embed --prompt-file prompts.csv --model models/bge-m3 --out items.npz \
+    --scale-file scales.csv        # optional: embeds only the embed=true items
   survey-semantics analyze-file responses.csv --prompt-file prompts.csv \
     --scale-file scales.csv --weights-file weights.csv --embeddings-file items.npz \
     --outdir outputs/run          # no --model needed; identical result
   ```
   Reusing one embeddings file across waves/cohorts also guarantees they share the
-  same semantic basis.
+  same semantic basis. Passing the same `--scale-file` to `embed` keeps `items.npz`
+  aligned to the analyzed (`embed=true`) item set.
 - **Questionnaires in separate files** (not one merged table): `run-study --data-dir <dir> --prompt-dir <dir>` merges them for you.
 - **Longitudinal / multiple waves** with differing item sets (e.g. NHIS 2021 vs 2024): restrict to common items so the waves share one space, run each, and compare — see the [NHIS example](examples/nhis/README.md).
 

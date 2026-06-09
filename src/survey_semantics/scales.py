@@ -10,12 +10,14 @@ reliably infer from the raw response numbers:
 - ``reverse`` — whether the item is reverse-coded.
 - ``ceiling`` *(optional)* — whether the item participates in the pan-mild
   item-level ceiling audit (an explicit allowlist when present).
+- ``embed`` *(optional)* — whether the item is embedded and analyzed at all (an
+  explicit item-selection allowlist when present; see :func:`scales_use_embed`).
 
 The canonical serialization is a CSV mirroring the prompt-file conventions::
 
-    item,min,max,sentinels,reverse,ceiling
-    SAD_A,1,5,7;8;9,true,true
-    LASTDR_A,1,8,0;97;98;99,false,false
+    item,min,max,sentinels,reverse,ceiling,embed
+    SAD_A,1,5,7;8;9,true,true,true
+    LASTDR_A,1,8,0;97;98;99,false,false,false
 
 This module only *loads and normalizes* scale files into a lookup; acting on
 the values (cleaning sentinels, applying ranges, reversing) is the pipeline's
@@ -49,6 +51,7 @@ _MAX_KEYS = ("max", "maximum", "high", "upper")
 _SENTINEL_KEYS = ("sentinels", "sentinel", "missing", "missing_codes", "na_codes")
 _REVERSE_KEYS = ("reverse", "reversed", "reverse_scored", "reverse_score")
 _CEILING_KEYS = ("ceiling", "ceiling_check", "ceiling_eligible", "audit_ceiling")
+_EMBED_KEYS = ("embed", "embedded", "include", "in_scope", "analyze")
 
 _TRUTHY = {"true", "t", "yes", "y", "1"}
 _FALSY = {"false", "f", "no", "n", "0", ""}
@@ -62,7 +65,10 @@ class ItemScale(TypedDict):
     ``reverse`` is always a bool. ``ceiling`` is ``None`` when undeclared
     (the pan-mild audit then falls back to the polytomous heuristic); ``True``
     means the item participates in the item-level ceiling check, ``False``
-    excludes it.
+    excludes it. ``embed`` is ``None`` when undeclared (the item is analyzed,
+    today's behavior); when *any* item declares it, ``embed`` becomes an explicit
+    item-selection allowlist — only ``embed=True`` items are embedded and
+    analyzed, ``embed=False`` (and undeclared) items are documented but excluded.
     """
 
     min: Optional[float]
@@ -70,6 +76,7 @@ class ItemScale(TypedDict):
     sentinels: Set[float]
     reverse: bool
     ceiling: Optional[bool]
+    embed: Optional[bool]
 
 
 def load_scale_sources(
@@ -181,6 +188,39 @@ def resolve_scale(
     return None
 
 
+def scales_use_embed(scales: Optional[Mapping[str, ItemScale]]) -> bool:
+    """Whether the scale file declares the ``embed`` column for any item.
+
+    When no item declares ``embed`` (the column is absent), every declared item
+    is embedded/analyzed — the pre-``embed`` behavior. When at least one item
+    declares it, ``embed`` is an explicit allowlist (see :func:`is_item_embedded`).
+    """
+
+    if not scales:
+        return False
+    return any(scale.get("embed") is not None for scale in scales.values())
+
+
+def is_item_embedded(
+    scale: Optional[ItemScale],
+    uses_embed: bool,
+) -> bool:
+    """Whether an item is embedded/analyzed under the ``embed`` allowlist rule.
+
+    - No scale declared for the item → ``False`` (it is not in the declared set).
+    - ``embed`` column absent from the file (``uses_embed=False``) → ``True``
+      (all declared items are analyzed, the pre-``embed`` behavior).
+    - ``embed`` column present → ``True`` only when this item's ``embed`` is
+      ``True``; ``embed=False`` and undeclared (blank) items are excluded.
+    """
+
+    if scale is None:
+        return False
+    if not uses_embed:
+        return True
+    return scale.get("embed") is True
+
+
 def _try_delimited_scales(
     path: Path,
     text: str,
@@ -218,6 +258,7 @@ def _try_delimited_scales(
                 "sentinels": _parse_sentinels(_first_value(lower, _SENTINEL_KEYS)),
                 "reverse": _parse_bool(_first(lower, _REVERSE_KEYS)),
                 "ceiling": _parse_optional_bool(_first_value(lower, _CEILING_KEYS)),
+                "embed": _parse_optional_bool(_first_value(lower, _EMBED_KEYS)),
             }
             key = "{}__{}".format(table, item) if table and item else item
             _add_scale_mapping(mapping, key, scale, default_table, include_bare_keys)
@@ -252,6 +293,7 @@ def _coerce_scale_value(value: object) -> Optional[ItemScale]:
         "sentinels": _parse_sentinels(_first_value(lower, _SENTINEL_KEYS)),
         "reverse": _parse_bool(_first_value(lower, _REVERSE_KEYS)),
         "ceiling": _parse_optional_bool(_first_value(lower, _CEILING_KEYS)),
+        "embed": _parse_optional_bool(_first_value(lower, _EMBED_KEYS)),
     }
 
 

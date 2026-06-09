@@ -17,7 +17,12 @@ from survey_semantics.embedding import (
 from survey_semantics.io import load_weights_file, read_survey_table
 from survey_semantics.pipeline import AnalysisConfig, analyze_survey_table
 from survey_semantics.prompts import load_prompt_sources
-from survey_semantics.scales import load_scale_sources
+from survey_semantics.scales import (
+    is_item_embedded,
+    load_scale_sources,
+    resolve_scale,
+    scales_use_embed,
+)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -32,6 +37,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     embed_parser.add_argument("--prompt-dir", type=Path, default=None)
     embed_parser.add_argument("--model", default=None, help="Local sentence-transformers model path (e.g. bge-m3).")
     embed_parser.add_argument("--out", type=Path, required=True, help="Output .npz embeddings file.")
+    embed_parser.add_argument(
+        "--scale-file", type=Path, default=None,
+        help="Optional per-item scale file. When it declares an `embed` column, only "
+             "embed=true items are embedded (matches the analysis item set exactly).",
+    )
+    embed_parser.add_argument("--scale-dir", type=Path, default=None, help="Directory of per-instrument scale files.")
 
     file_parser = subparsers.add_parser("analyze-file", help="Analyze one survey table.")
     _add_common_args(file_parser)
@@ -117,8 +128,10 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--prompt-dir", type=Path, default=None)
     parser.add_argument(
         "--scale-file", type=Path, default=None,
-        help="Per-item scale file (item,min,max,sentinels,reverse). Declares the "
-             "analyzed item set, per-item missing codes, valid ranges, and reverse scoring.",
+        help="Per-item scale file (item,min,max,sentinels,reverse[,ceiling,embed]). "
+             "Declares the analyzed item set, per-item missing codes, valid ranges, "
+             "and reverse scoring. An optional `embed` column is an allowlist: only "
+             "embed=true items are analyzed (embed=false items stay documented).",
     )
     parser.add_argument("--scale-dir", type=Path, default=None, help="Directory of per-instrument scale files.")
     parser.add_argument(
@@ -246,11 +259,38 @@ def _embed(args: argparse.Namespace) -> int:
     prompts = _flat_prompts(args)
     if not prompts:
         raise SystemExit("embed: no item,prompt rows found.")
+    scales = load_scale_sources(
+        getattr(args, "scale_file", None), getattr(args, "scale_dir", None)
+    )
+    if scales:
+        prompts = _filter_prompts_by_embed(prompts, scales)
+        if not prompts:
+            raise SystemExit(
+                "embed: the scale file marks no items embed=true (nothing to embed)."
+            )
     embeddings = embed_item_prompts(prompts, method="sentence-transformers", model_name=args.model)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     save_item_embeddings(args.out, embeddings)
     print("Embedded {} items -> {} ({}).".format(len(embeddings.items), args.out, embeddings.slug))
     return 0
+
+
+def _filter_prompts_by_embed(prompts: dict, scales: dict) -> dict:
+    """Keep only prompt items selected by the scale file's `embed` allowlist.
+
+    Each prompt key may be bare (``gad7_1``) or qualified (``COPE__gad7_1``);
+    it is resolved against the scales with the same key-matching as the pipeline.
+    When no item declares `embed`, all prompt items with a declared scale are
+    kept (the pre-`embed` behavior).
+    """
+    uses_embed = scales_use_embed(scales)
+    kept = {}
+    for key, text in prompts.items():
+        table, _, item = str(key).rpartition("__")
+        scale = resolve_scale(scales, table, item or key)
+        if is_item_embedded(scale, uses_embed):
+            kept[key] = text
+    return kept
 
 
 def _analyze_file(args: argparse.Namespace) -> int:

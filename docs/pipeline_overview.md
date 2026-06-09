@@ -100,7 +100,7 @@ Here the space is the **PCA of the question wording's embeddings** — so:
 | [`cli.py`](../src/survey_semantics/cli.py) | 349 | Argument parsing; loads prompts/scales; builds `AnalysisConfig`; dispatches `analyze-file` / `analyze-package` / combined; writes outputs. | Single entry point; keeps I/O and orchestration out of the math. |
 | [`io.py`](../src/survey_semantics/io.py) | 290 | Read survey tables (generic + NDA dictionary-row format); coerce responses to numeric; infer item columns; clean sentinels; build covariate matrix. | All the messy "turn a CSV into clean numeric arrays" logic in one place. |
 | [`prompts.py`](../src/survey_semantics/prompts.py) | 286 | Load item **wording** from CSV/JSON/Python-dict/dir; namespaced key resolution (`table__item` → bare → normalized). | Prompt text is the raw material for the semantic space; must match items robustly across naming styles. |
-| [`scales.py`](../src/survey_semantics/scales.py) | 343 | Load per-item **scale specs** (`min,max,sentinels,reverse`); same namespacing as prompts. *(Part 1, new.)* | Lets the tool know each item's valid range, its own missing-value codes, and reverse coding — things it otherwise has to guess from data. |
+| [`scales.py`](../src/survey_semantics/scales.py) | 412 | Load per-item **scale specs** (`min,max,sentinels,reverse,ceiling,embed`); same namespacing as prompts. *(Part 1, new.)* | Lets the tool know each item's valid range, its own missing-value codes, reverse coding, ceiling-audit eligibility, and whether it's in the analyzed set (`embed`) — things it otherwise has to guess from data. |
 | [`embedding.py`](../src/survey_semantics/embedding.py) | ~230 | The **LLM step**, fully decoupled: embed item text via a local `sentence-transformers` model (e.g. bge-m3); save/load a reusable `ItemEmbeddings` artifact; enforce the offline policy. No fallback — a missing model raises. | Isolates the only model dependency so embedding can run once and the PCA/downstream analysis can run with no model. |
 | [`pipeline.py`](../src/survey_semantics/pipeline.py) | 1108 | The core algorithm: `analyze_survey_table` (stages 2–13), dimension selection, residualization, Mahalanobis, stability, drivers, case studies, UMAP. | The heart — everything else feeds it clean inputs and serializes its outputs. |
 | [`combined.py`](../src/survey_semantics/combined.py) | 663 | Build a single transdiagnostic matrix across *many* questionnaire files (auto-reverse detection, item merging). | For the "many small instruments → one space" mode; not used for the per-year NHIS runs. |
@@ -136,9 +136,9 @@ One row per item; supports `--prompt-file` (one file) or `--prompt-dir` (per-ins
 
 ### Scale file — `*_scales.csv` (**required** by the `analyze-file` CLI) — `--scale-file` / `--scale-dir`
 ```csv
-item,min,max,sentinels,reverse,ceiling
-SAD_A,1,5,7;8;9,true,true
-LASTDR_A,1,8,0;97;98;99,false,false
+item,min,max,sentinels,reverse,ceiling,embed
+SAD_A,1,5,7;8;9,true,true,true
+LASTDR_A,1,8,0;97;98;99,false,false,false
 ```
 - `min,max` — valid range, used for normalization instead of observed range.
 - `sentinels` — `;`-separated **per-item** missing codes (mapped to NaN). This is
@@ -149,8 +149,17 @@ LASTDR_A,1,8,0;97;98;99,false,false
   allowlist (only `ceiling=true` items are checked) — so an item like `LASTDR_A`,
   where "maxed out" is not a symptom ceiling, can be excluded. When the column is
   **absent**, the audit falls back to all polytomous items (≥3 levels).
-- **When supplied, the declared items also define the analyzed set** (inference is
-  skipped), so valid items aren't dropped for having "too many" unique codes.
+- `embed` *(optional)* — **item-selection allowlist.** When **any** item declares
+  it, only `embed=true` items are embedded *and* analyzed; `embed=false` (and
+  blank) items stay in the file as documentation but are excluded from the basis,
+  the distances, and the item set. When the column is **absent**, every declared
+  item is analyzed (the pre-`embed` behavior). Use it to curate a large
+  cross-instrument item pool auditably. The same flag drives the `embed`
+  subcommand: `survey-semantics embed --scale-file scales.csv …`
+  embeds exactly the `embed=true` items, so `items.npz` matches the analyzed set.
+- **When supplied, the declared (and `embed=true`) items also define the analyzed
+  set** (inference is skipped), so valid items aren't dropped for having "too many"
+  unique codes.
 
 ### Weights file — `*_weights.csv` (**required** by the `analyze-file` CLI) — `--weights-file`
 ```csv

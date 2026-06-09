@@ -14,7 +14,12 @@ from survey_semantics.pipeline import (
     normalize_responses,
     residualize,
 )
-from survey_semantics.scales import load_scale_sources, resolve_scale
+from survey_semantics.scales import (
+    is_item_embedded,
+    load_scale_sources,
+    resolve_scale,
+    scales_use_embed,
+)
 
 
 def _write(tmp_path, name, text):
@@ -37,7 +42,7 @@ def test_scale_csv_roundtrip_and_per_item_sentinels(tmp_path):
     sad = resolve_scale(scales, "x", "SAD_A")
     last = resolve_scale(scales, "x", "LASTDR_A")
     assert sad == {"min": 1.0, "max": 5.0, "sentinels": {7.0, 8.0, 9.0},
-                   "reverse": True, "ceiling": None}
+                   "reverse": True, "ceiling": None, "embed": None}
     # 7/8 are *valid* answers for LASTDR_A — its sentinels differ per item.
     assert last["sentinels"] == {0.0, 97.0, 98.0, 99.0}
     assert last["reverse"] is False
@@ -47,6 +52,32 @@ def test_scale_json_dict_of_dicts_list_sentinels(tmp_path):
     path = _write(tmp_path, "x_scales.json", '{"FOO": {"min": 1, "max": 4, "sentinels": [7, 8, 9], "reverse": true}}')
     scales = load_scale_sources(scale_file=path)
     assert resolve_scale(scales, "x", "FOO")["sentinels"] == {7.0, 8.0, 9.0}
+
+
+def test_embed_column_absent_means_all_declared_analyzed(tmp_path):
+    # No `embed` column -> embed is None everywhere, allowlist off, all kept.
+    path = _write(tmp_path, "x_scales.csv",
+                  "item,min,max,sentinels,reverse\nA,1,5,9,false\nB,1,5,9,false\n")
+    scales = load_scale_sources(scale_file=path)
+    assert scales_use_embed(scales) is False
+    assert resolve_scale(scales, "x", "A")["embed"] is None
+    assert is_item_embedded(resolve_scale(scales, "x", "A"), uses_embed=False) is True
+
+
+def test_embed_column_is_an_allowlist(tmp_path):
+    path = _write(tmp_path, "x_scales.csv",
+                  "item,min,max,sentinels,reverse,embed\n"
+                  "A,1,5,9,false,true\n"
+                  "B,1,5,9,false,false\n"
+                  "C,1,5,9,false,\n")  # blank embed, file otherwise uses it
+    scales = load_scale_sources(scale_file=path)
+    assert scales_use_embed(scales) is True
+    uses = True
+    assert is_item_embedded(resolve_scale(scales, "x", "A"), uses) is True   # embed=true
+    assert is_item_embedded(resolve_scale(scales, "x", "B"), uses) is False  # embed=false
+    assert is_item_embedded(resolve_scale(scales, "x", "C"), uses) is False  # blank -> excluded
+    # An item with no declared scale at all is never embedded.
+    assert is_item_embedded(resolve_scale(scales, "x", "ZZZ"), uses) is False
 
 
 def test_scale_directory_namespaces_by_stem(tmp_path):
