@@ -5,7 +5,8 @@ import re
 import socket
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from pathlib import Path
+from typing import List, Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -18,6 +19,83 @@ class EmbeddingResult:
     requested_backend: str
     requested_model_name: str
     slug: str
+
+
+@dataclass
+class ItemEmbeddings:
+    """A reusable, response-independent embedding of survey items.
+
+    This is the artifact produced by the LLM step and consumed by the downstream
+    PCA/analysis. It carries the item names alongside the vectors so the
+    analysis can align them to its own item columns, and the embedding
+    provenance (backend/model/slug) for output naming.
+    """
+
+    items: List[str]
+    vectors: np.ndarray            # shape (len(items), dim)
+    backend: str
+    model_name: str
+    slug: str
+
+    def matrix_for(self, item_columns: Sequence[str]) -> np.ndarray:
+        """Return the embedding rows for `item_columns`, in that order.
+
+        Raises if any requested item has no precomputed embedding — never
+        silently drops or substitutes items.
+        """
+        index = {item: i for i, item in enumerate(self.items)}
+        missing = [c for c in item_columns if c not in index]
+        if missing:
+            raise ValueError(
+                "Precomputed embeddings are missing {} item(s): {}".format(
+                    len(missing), ", ".join(map(str, missing[:10]))
+                )
+            )
+        return self.vectors[[index[c] for c in item_columns]]
+
+
+def embed_item_prompts(
+    prompts: Mapping[str, str],
+    method: str = "sentence-transformers",
+    model_name: Optional[str] = None,
+) -> ItemEmbeddings:
+    """Embed an item→wording mapping into a reusable :class:`ItemEmbeddings`."""
+
+    items = [str(item) for item in prompts.keys()]
+    texts = [str(prompts[item]) for item in prompts.keys()]
+    result = embed_texts_with_metadata(texts, method=method, model_name=model_name)
+    return ItemEmbeddings(
+        items=items,
+        vectors=result.vectors,
+        backend=result.backend,
+        model_name=result.model_name,
+        slug=result.slug,
+    )
+
+
+def save_item_embeddings(path: Path, embeddings: ItemEmbeddings) -> None:
+    """Persist item embeddings to a `.npz` file (no pickle; portable)."""
+
+    np.savez(
+        Path(path),
+        items=np.array(embeddings.items),
+        vectors=np.asarray(embeddings.vectors, dtype=float),
+        meta=np.array([embeddings.backend, embeddings.model_name, embeddings.slug]),
+    )
+
+
+def load_item_embeddings(path: Path) -> ItemEmbeddings:
+    """Load item embeddings written by :func:`save_item_embeddings`."""
+
+    data = np.load(Path(path))
+    backend, model_name, slug = (str(x) for x in data["meta"])
+    return ItemEmbeddings(
+        items=[str(x) for x in data["items"]],
+        vectors=np.asarray(data["vectors"], dtype=float),
+        backend=backend,
+        model_name=model_name,
+        slug=slug,
+    )
 
 
 OFFLINE_ENV = {

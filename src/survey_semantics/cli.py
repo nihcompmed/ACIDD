@@ -8,7 +8,12 @@ from typing import List, Optional
 import pandas as pd
 
 from survey_semantics.combined import build_combined_package_table
-from survey_semantics.embedding import embedding_slug
+from survey_semantics.embedding import (
+    embed_item_prompts,
+    embedding_slug,
+    load_item_embeddings,
+    save_item_embeddings,
+)
 from survey_semantics.io import load_weights_file, read_survey_table
 from survey_semantics.pipeline import AnalysisConfig, analyze_survey_table
 from survey_semantics.prompts import load_prompt_sources
@@ -19,10 +24,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="survey-semantics")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    embed_parser = subparsers.add_parser(
+        "embed",
+        help="LLM step only: embed item prompts into a reusable embeddings file (no responses).",
+    )
+    embed_parser.add_argument("--prompt-file", type=Path, default=None, help="item,prompt CSV/TSV.")
+    embed_parser.add_argument("--prompt-dir", type=Path, default=None)
+    embed_parser.add_argument("--model", default=None, help="Local sentence-transformers model path (e.g. bge-m3).")
+    embed_parser.add_argument("--out", type=Path, required=True, help="Output .npz embeddings file.")
+
     file_parser = subparsers.add_parser("analyze-file", help="Analyze one survey table.")
     _add_common_args(file_parser)
     file_parser.add_argument("path", type=Path)
     file_parser.add_argument("--name", default=None)
+    file_parser.add_argument(
+        "--embeddings-file", type=Path, default=None,
+        help="Use precomputed item embeddings from `embed` (skips the LLM; --model not needed).",
+    )
 
     package_parser = subparsers.add_parser("analyze-package", help="Analyze all viable survey tables in a folder.")
     _add_common_args(package_parser)
@@ -69,6 +87,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     args = parser.parse_args(argv)
 
+    if args.command == "embed":
+        return _embed(args)
     if args.command == "analyze-file":
         return _analyze_file(args)
     if args.command == "analyze-package":
@@ -188,6 +208,51 @@ def _config_from_args(args: argparse.Namespace) -> AnalysisConfig:
     )
 
 
+def _flat_prompts(args: argparse.Namespace) -> dict:
+    """Read a flat item->wording mapping from --prompt-file / --prompt-dir."""
+    files = []
+    if args.prompt_dir:
+        files += sorted(
+            p for p in Path(args.prompt_dir).iterdir()
+            if p.suffix.lower() in {".csv", ".tsv", ".tab", ".txt"}
+        )
+    if args.prompt_file:
+        files.append(Path(args.prompt_file))
+    if not files:
+        raise SystemExit("embed: provide --prompt-file or --prompt-dir.")
+
+    mapping = {}
+    for path in files:
+        sep = "\t" if path.suffix.lower() in {".tsv", ".tab"} else ","
+        frame = pd.read_csv(path, sep=sep)
+        cols = {str(c).strip().lower(): c for c in frame.columns}
+        item_col = next((cols[k] for k in ("item", "feature", "column", "variable") if k in cols), None)
+        prompt_col = cols.get("prompt")
+        if item_col is None or prompt_col is None:
+            raise SystemExit("embed: {} needs 'item' and 'prompt' columns.".format(path))
+        table_col = cols.get("table") or cols.get("instrument")
+        for _, row in frame.iterrows():
+            item = str(row[item_col]).strip()
+            text = str(row[prompt_col]).strip()
+            if not item or not text:
+                continue
+            if table_col and str(row[table_col]).strip():
+                item = "{}__{}".format(str(row[table_col]).strip(), item)
+            mapping[item] = text
+    return mapping
+
+
+def _embed(args: argparse.Namespace) -> int:
+    prompts = _flat_prompts(args)
+    if not prompts:
+        raise SystemExit("embed: no item,prompt rows found.")
+    embeddings = embed_item_prompts(prompts, method="sentence-transformers", model_name=args.model)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    save_item_embeddings(args.out, embeddings)
+    print("Embedded {} items -> {} ({}).".format(len(embeddings.items), args.out, embeddings.slug))
+    return 0
+
+
 def _analyze_file(args: argparse.Namespace) -> int:
     if not (args.scale_file or args.scale_dir):
         raise SystemExit(
@@ -208,7 +273,12 @@ def _analyze_file(args: argparse.Namespace) -> int:
     table = read_survey_table(args.path, prompt_dictionary=prompts)
     if args.name:
         table.name = args.name
-    result = analyze_survey_table(table, _config_from_args(args))
+    item_embeddings = None
+    if getattr(args, "embeddings_file", None):
+        item_embeddings = load_item_embeddings(args.embeddings_file)
+    result = analyze_survey_table(
+        table, _config_from_args(args), item_embeddings=item_embeddings
+    )
     _write_result(result, args.outdir, _safe_name(result.table_name))
     _write_summary(pd.DataFrame([result.summary]), args.outdir, result.summary["embedding_slug"])
     print("Analyzed {}: {} rows, {} items, D={}.".format(

@@ -12,6 +12,7 @@ from sklearn.impute import KNNImputer
 from sklearn.linear_model import LinearRegression
 
 from survey_semantics.embedding import (
+    ItemEmbeddings,
     embed_texts_with_metadata,
     enforce_local_ai_offline_policy,
     install_outbound_socket_blocker,
@@ -265,11 +266,19 @@ def analyze_survey_table(
     table: SurveyTable,
     config: Optional[AnalysisConfig] = None,
     item_columns: Optional[Sequence[str]] = None,
+    item_embeddings: Optional[ItemEmbeddings] = None,
 ) -> AnalysisResult:
-    """Run semantic manifold analysis for one survey table."""
+    """Run semantic manifold analysis for one survey table.
+
+    The LLM embedding of items and the downstream PCA/response analysis are
+    decoupled: pass a precomputed ``item_embeddings`` (from a prior `embed` step)
+    to run everything *without* loading the model. When omitted, items are
+    embedded inline.
+    """
 
     config = config or AnalysisConfig()
-    if config.disable_network:
+    # Network/offline guards are only needed when we actually load the model.
+    if config.disable_network and item_embeddings is None:
         enforce_local_ai_offline_policy()
         install_outbound_socket_blocker()
 
@@ -383,19 +392,37 @@ def analyze_survey_table(
         )
         at_ceiling = ceiling_flags(response_norm, ceiling_mask)
 
+    # Item wording, used for prompt-loading labels regardless of embedding source.
     item_texts = [
         _item_text(col, table.dictionary.get(col, col))
         for col in item_columns
     ]
-    embedding_result = embed_texts_with_metadata(
-        item_texts,
-        method=config.embedding,
-        model_name=config.model_name,
-    )
-    item_embeddings = embedding_result.vectors
-    item_embeddings = item_embeddings - item_embeddings.mean(axis=0, keepdims=True)
 
-    possible_components = min(item_embeddings.shape[0], item_embeddings.shape[1])
+    # Item embedding (LLM step) — precomputed or inline. Either way this yields
+    # the item-embedding matrix plus provenance for output naming.
+    if item_embeddings is not None:
+        embedding_vectors = item_embeddings.matrix_for(item_columns)
+        emb_backend = item_embeddings.backend
+        emb_model = item_embeddings.model_name
+        emb_slug = item_embeddings.slug
+        emb_requested_backend = item_embeddings.backend
+        emb_requested_model = item_embeddings.model_name
+    else:
+        embedding_result = embed_texts_with_metadata(
+            item_texts,
+            method=config.embedding,
+            model_name=config.model_name,
+        )
+        embedding_vectors = embedding_result.vectors
+        emb_backend = embedding_result.backend
+        emb_model = embedding_result.model_name
+        emb_slug = embedding_result.slug
+        emb_requested_backend = embedding_result.requested_backend
+        emb_requested_model = embedding_result.requested_model_name
+
+    item_embedding_matrix = embedding_vectors - embedding_vectors.mean(axis=0, keepdims=True)
+
+    possible_components = min(item_embedding_matrix.shape[0], item_embedding_matrix.shape[1])
     if config.max_components and config.max_components > 0:
         max_components = min(config.max_components, possible_components)
     else:
@@ -404,7 +431,7 @@ def analyze_survey_table(
         raise ValueError("Item text embedding did not produce usable features.")
 
     pca_full = PCA(n_components=max_components, svd_solver="full")
-    item_coordinates_full = pca_full.fit_transform(item_embeddings)
+    item_coordinates_full = pca_full.fit_transform(item_embedding_matrix)
     eigenvalues = np.nan_to_num(pca_full.explained_variance_)
     explained = np.nan_to_num(pca_full.explained_variance_ratio_)
     cumulative = np.cumsum(explained)
@@ -415,7 +442,7 @@ def analyze_survey_table(
     )
     d_eigengap, eigengap_ratio = eigengap_dimension(eigenvalues)
     parallel = parallel_analysis(
-        matrix=item_embeddings,
+        matrix=item_embedding_matrix,
         observed_eigenvalues=eigenvalues,
         n_components=max_components,
         n_permutations=config.d_null_permutations,
@@ -543,11 +570,11 @@ def analyze_survey_table(
         "n_rows": int(len(scores)),
         "n_items": int(len(item_columns)),
         "optimal_d": int(optimal_d),
-        "embedding": embedding_result.backend,
-        "embedding_model": embedding_result.model_name,
-        "embedding_slug": embedding_result.slug,
-        "requested_embedding": embedding_result.requested_backend,
-        "requested_embedding_model": embedding_result.requested_model_name,
+        "embedding": emb_backend,
+        "embedding_model": emb_model,
+        "embedding_slug": emb_slug,
+        "requested_embedding": emb_requested_backend,
+        "requested_embedding_model": emb_requested_model,
         "explained_variance": float(cumulative[optimal_d - 1]) if cumulative.size else 0.0,
         "variance_threshold": float(config.variance_threshold),
         "variance_threshold_reached": bool(variance_threshold_reached),

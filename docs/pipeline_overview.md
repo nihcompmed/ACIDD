@@ -101,7 +101,7 @@ Here the space is the **PCA of the question wording's embeddings** — so:
 | [`io.py`](../src/survey_semantics/io.py) | 290 | Read survey tables (generic + NDA dictionary-row format); coerce responses to numeric; infer item columns; clean sentinels; build covariate matrix. | All the messy "turn a CSV into clean numeric arrays" logic in one place. |
 | [`prompts.py`](../src/survey_semantics/prompts.py) | 286 | Load item **wording** from CSV/JSON/Python-dict/dir; namespaced key resolution (`table__item` → bare → normalized). | Prompt text is the raw material for the semantic space; must match items robustly across naming styles. |
 | [`scales.py`](../src/survey_semantics/scales.py) | 343 | Load per-item **scale specs** (`min,max,sentinels,reverse`); same namespacing as prompts. *(Part 1, new.)* | Lets the tool know each item's valid range, its own missing-value codes, and reverse coding — things it otherwise has to guess from data. |
-| [`embedding.py`](../src/survey_semantics/embedding.py) | ~150 | Turn item text into vectors via a local `sentence-transformers` model (e.g. bge-m3); enforce the offline policy. No fallback — a missing model raises. | The semantic step; isolated so the offline/network guards live in one place. |
+| [`embedding.py`](../src/survey_semantics/embedding.py) | ~230 | The **LLM step**, fully decoupled: embed item text via a local `sentence-transformers` model (e.g. bge-m3); save/load a reusable `ItemEmbeddings` artifact; enforce the offline policy. No fallback — a missing model raises. | Isolates the only model dependency so embedding can run once and the PCA/downstream analysis can run with no model. |
 | [`pipeline.py`](../src/survey_semantics/pipeline.py) | 1108 | The core algorithm: `analyze_survey_table` (stages 2–13), dimension selection, residualization, Mahalanobis, stability, drivers, case studies, UMAP. | The heart — everything else feeds it clean inputs and serializes its outputs. |
 | [`combined.py`](../src/survey_semantics/combined.py) | 663 | Build a single transdiagnostic matrix across *many* questionnaire files (auto-reverse detection, item merging). | For the "many small instruments → one space" mode; not used for the per-year NHIS runs. |
 | [`plotting.py`](../src/survey_semantics/plotting.py) | 431 | Render PDF plots from the output CSVs. | Optional visualization, decoupled from analysis. |
@@ -202,6 +202,24 @@ python -m survey_semantics.cli analyze-file path/to/data.csv \
 > `sentence-transformers` model (e.g. bge-m3); there is no TF-IDF/auto fallback.
 > The model must already be on local disk (the pipeline blocks network egress).
 > Tests use a deterministic fake encoder so they run without the model.
+
+### Decoupling the LLM step (embed once, analyze many)
+
+The item embedding (stage 7) depends only on the prompts, not the responses, so
+it is separable from the PCA/downstream analysis. Run the model once and reuse:
+
+```bash
+# LLM step only → a reusable embeddings artifact:
+python -m survey_semantics.cli embed --prompt-file prompts.csv --model /path/to/bge-m3 --out items.npz
+# Analysis with NO model (PCA + projection + Mahalanobis + …):
+python -m survey_semantics.cli analyze-file responses.csv \
+  --prompt-file prompts.csv --scale-file scales.csv --weights-file weights.csv \
+  --embeddings-file items.npz --outdir outputs/run
+```
+
+The result is bit-identical to embedding inline. Reusing one `items.npz` across
+waves/cohorts also guarantees a shared basis `W`. `ItemEmbeddings.matrix_for`
+raises if any analyzed item lacks an embedding (no silent substitution).
 
 ### Worked example — NHIS 2021
 ```bash

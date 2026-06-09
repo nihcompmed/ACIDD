@@ -83,26 +83,32 @@ so any other survey can be run the same way by writing its own converter. See
 
 ## 3. Analyze each year
 
-The convenience script converts then runs both years:
+The convenience script converts, **embeds the common prompts once** (the only LLM
+step), then analyzes both years from that shared embeddings file — so the years
+provably share one semantic basis and the per-year analyses need no model:
 
 ```bash
 # Requires a local bge-m3 (sentence-transformers) model; there is no fallback.
 MODEL=/path/to/bge-m3 examples/nhis/run_nhis.sh
 ```
 
-Or run one year explicitly:
+Equivalently, by hand — embed once, then analyze each year with `--embeddings-file`:
 
 ```bash
+python -m survey_semantics.cli embed \
+  --prompt-file data/NHIS/2021/nhis2021_prompts.csv \
+  --model /path/to/bge-m3 --out outputs/nhis/nhis_items.npz
+
 python -m survey_semantics.cli analyze-file data/NHIS/2021/nhis2021.csv \
-  --prompt-file  data/NHIS/2021/nhis2021_prompts.csv \
-  --scale-file   data/NHIS/2021/nhis2021_scales.csv \
-  --weights-file data/NHIS/2021/nhis2021_weights.csv \
+  --prompt-file   data/NHIS/2021/nhis2021_prompts.csv \
+  --scale-file    data/NHIS/2021/nhis2021_scales.csv \
+  --weights-file  data/NHIS/2021/nhis2021_weights.csv \
+  --embeddings-file outputs/nhis/nhis_items.npz \
   --id-col HHX \
-  --embedding sentence-transformers --model /path/to/bge-m3 \
   --d-selection variance --variance-threshold 0.80 --max-components 0 \
   --skip-umap \
   --outdir outputs/nhis/2021
-# → Analyzed nhis2021: 29372 rows, 38 items, D=19.
+# → Analyzed nhis2021: 29372 rows, 38 items, D=14 (bge-m3).
 ```
 
 What each NHIS-specific flag does:

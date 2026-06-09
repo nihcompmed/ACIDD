@@ -106,6 +106,17 @@ Full file formats and options: [docs/pipeline_overview.md](docs/pipeline_overvie
 
 ### Variants
 
+- **Embed once, analyze many** (decouple the LLM from the analysis). The item
+  embedding depends only on the prompts, not the responses, so you can run the
+  model once and reuse the result:
+  ```bash
+  survey-semantics embed --prompt-file prompts.csv --model models/bge-m3 --out items.npz
+  survey-semantics analyze-file responses.csv --prompt-file prompts.csv \
+    --scale-file scales.csv --weights-file weights.csv --embeddings-file items.npz \
+    --outdir outputs/run          # no --model needed; identical result
+  ```
+  Reusing one embeddings file across waves/cohorts also guarantees they share the
+  same semantic basis.
 - **Questionnaires in separate files** (not one merged table): `run-study --data-dir <dir> --prompt-dir <dir>` merges them for you.
 - **Longitudinal / multiple waves** with differing item sets (e.g. NHIS 2021 vs 2024): restrict to common items so the waves share one space, run each, and compare — see the [NHIS example](examples/nhis/README.md).
 
