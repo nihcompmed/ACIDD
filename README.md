@@ -85,9 +85,8 @@ the dimension diagnostics** — the cumulative-variance curve, the eigengaps, an
 parallel-analysis null. It deliberately does **not** pick a working dimension `D`;
 that is a stage-3 choice (below). No responses are involved, so the basis is fixed
 by the prompts alone — reuse one `basis.npz` across waves and they share it.
-(`pca` always keeps **all** PCs — the full decomposition — so the dimension choice
-stays entirely open for stage 3. `--d-null-permutations` / `--d-null-percentile`
-configure the parallel-analysis null computed here.)
+(`--d-null-permutations` / `--d-null-percentile` configure the parallel-analysis
+null computed here.)
 
 ### Stage 3 — score: select D, then rank outliers (responses, scales, weights enter here)
 
@@ -107,27 +106,25 @@ P001,42,F,1,3,2
 P002,67,M,5,1,4
 ```
 
-**`scales.csv`** *(required)* — per-item valid range, missing-value codes,
-`reverse` flag, and optional `ceiling` / `embed`. Reverse-scoring is part of the
-method, so this file is mandatory (set `reverse` to `false` for items that don't
-need it):
+**`scales.csv`** *(required)* — per-item valid range, missing-value codes, and the
+`reverse` flag. Reverse-scoring is part of the method, so this file is mandatory
+(set `reverse` to `false` for items that don't need it):
 
 ```csv
-item,min,max,sentinels,reverse,ceiling,embed
-sad,1,5,7;8;9,false,true,true
-sleep,1,5,7;8;9,false,true,true
-worry,1,5,7;8;9,false,true,true
+item,min,max,sentinels,reverse
+sad,1,5,7;8;9,false
+sleep,1,5,7;8;9,false
+worry,1,5,7;8;9,false
 ```
 
-The optional **`embed`** column is an item-selection allowlist: when present, only
-`embed=true` rows are embedded and analyzed, and `embed=false` rows stay in the
-file as documentation but are excluded. Pass the same `--scale-file` to `embed` so
-`items.npz` matches the analyzed item set.
+Two optional columns can be added. **`embed`** is an item-selection allowlist:
+when present, only `embed=true` rows are embedded and analyzed, and `embed=false`
+rows stay in the file as documentation but are excluded — pass the same
+`--scale-file` to `embed` so `items.npz` matches the analyzed item set.
+**`ceiling`** marks which items count toward the `--pan-mild` ceiling check.
 
 **`weights.csv`** *(required)* — one survey weight per row, in the same order as
-`responses.csv`. For an **unweighted** analysis (as in the paper), use a column of
-equal weights (e.g. all `1`s) — equal weights give the same outlier ranking and
-empirical outlier set as the unweighted method:
+`responses.csv` (one number per line; the `weight` header is optional):
 
 ```csv
 weight
@@ -135,13 +132,33 @@ weight
 903.1
 ```
 
+**Unweighted analysis (as in the paper): make every weight `1`.** Equal weights
+turn the weighting into a no-op — WLS residualization reduces to ordinary least
+squares and the weighted Mahalanobis matches the unweighted distances (up to a
+negligible constant), so the outlier ranking and empirical outlier set are
+identical to an unweighted run:
+
+```csv
+weight
+1
+1
+```
+
+The file stays required either way, so a run always states its weighting choice
+explicitly rather than defaulting silently.
+
+Stage 3 needs the **responses**, the **basis**, the **scale file**, and the
+**weights file**. `--prompt-file` is *optional* here — it only carries the wording
+into the loadings/case-study outputs (the basis already fixes the items); the
+inline shortcut below does need it, since that path re-embeds.
+
 ```bash
 survey-semantics analyze-file responses.csv \
   --basis-file    basis.npz \
   --scale-file    scales.csv \
   --weights-file  weights.csv \
-  --prompt-file   prompts.csv \
   --d-selection   variance \   # choose D here: variance|eigengap|parallel|stability|max
+  --prompt-file   prompts.csv \  # optional: labels the loadings/case studies
   --outdir outputs/run         # no --model needed — the basis holds the decomposition
 ```
 
