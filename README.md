@@ -35,14 +35,28 @@ snapshot_download(repo_id='BAAI/bge-m3', local_dir='models/bge-m3', \
 ignore_patterns=['onnx/**','openvino/**','*.onnx'])"
 ```
 
-## Run — a worked example
+## How it runs — three modular stages
 
 You give the tool the **wording of each question** and a table of **responses**;
 it returns a ranked list of people whose answers form an unusually different
-overall pattern. The method embeds the prompts first to build a semantic space,
-then projects the responses into it — so we set up the files in that order.
+overall pattern. The work splits into three stages, and **each stage needs only
+its own inputs** — so the expensive model step is decoupled from the analysis:
 
-**1. `prompts.csv`** — the wording of each item. This is what builds the space:
+```text
+Stage 1 · embed    prompts.csv ──────────────► items.npz    (question wording only)
+Stage 2 · pca      items.npz ───────────────► basis.npz     (embeddings only → the semantic space)
+Stage 3 · score    basis.npz + responses.csv + scales.csv + weights.csv ──► ranked outliers
+```
+
+The semantic space is built from the **meaning of the questions**, so the
+embedding (stage 1) and the PCA basis (stage 2) depend only on the prompts — never
+on anyone's answers. Responses, scales, and reverse-scoring enter only at stage 3.
+Stages 1–2 are deterministic, so the same prompts always yield the same basis: you
+can build it once and reuse it across waves/cohorts to guarantee a shared space.
+
+### Stage 1 — embed (needs only the prompts)
+
+**`prompts.csv`** — the wording of each item. This is what builds the space:
 
 ```csv
 item,prompt
@@ -51,9 +65,27 @@ sleep,How often do you have trouble sleeping?
 worry,How often do you feel worried?
 ```
 
-**2. `responses.csv`** — one row per person: an id, optional `age`/`sex`, then one
-column per item. Items from all your questionnaires go side by side, and the
-column names match the `item` keys above:
+```bash
+survey-semantics embed --prompt-file prompts.csv --model models/bge-m3 --out items.npz
+```
+
+`items.npz` is a reusable embedding artifact (one vector per item). It depends
+only on the wording — reuse it for every cohort that shares these questions.
+
+### Stage 2 — pca (needs only the embeddings)
+
+```bash
+survey-semantics pca --embeddings-file items.npz --out basis.npz
+```
+
+`basis.npz` **is** the semantic space: the PCA of the item embeddings plus the
+dimension diagnostics. No responses are involved, so it is fixed by the prompts
+alone — reusing one `basis.npz` across waves guarantees they share the same basis.
+
+### Stage 3 — score (responses, scales, weights enter here)
+
+**`responses.csv`** — one row per person: an id, optional `age`/`sex`, then one
+column per item (names match the `item` keys above):
 
 ```csv
 id,age,sex,sad,sleep,worry
@@ -61,7 +93,7 @@ P001,42,F,1,3,2
 P002,67,M,5,1,4
 ```
 
-**3. `scales.csv`** *(required)* — per-item valid range, missing-value codes,
+**`scales.csv`** *(required)* — per-item valid range, missing-value codes,
 `reverse` flag, and optional `ceiling` / `embed`. Reverse-scoring is part of the
 method, so this file is mandatory (set `reverse` to `false` for items that don't
 need it):
@@ -75,10 +107,10 @@ worry,1,5,7;8;9,false,true,true
 
 The optional **`embed`** column is an item-selection allowlist: when present, only
 `embed=true` rows are embedded and analyzed, and `embed=false` rows stay in the
-file as documentation but are excluded. Omit the column to analyze every declared
-item. (Useful for auditably curating a large cross-instrument item pool.)
+file as documentation but are excluded. Pass the same `--scale-file` to `embed` so
+`items.npz` matches the analyzed item set.
 
-**4. `weights.csv`** *(required)* — one survey weight per row, in the same order as
+**`weights.csv`** *(required)* — one survey weight per row, in the same order as
 `responses.csv`. For an **unweighted** analysis (as in the paper), use a column of
 equal weights (e.g. all `1`s) — equal weights give the same outlier ranking and
 empirical outlier set as the unweighted method:
@@ -89,19 +121,29 @@ weight
 903.1
 ```
 
-**5. Run it** (needs a local bge-m3 model — see above):
+```bash
+survey-semantics analyze-file responses.csv \
+  --basis-file    basis.npz \
+  --scale-file    scales.csv \
+  --weights-file  weights.csv \
+  --prompt-file   prompts.csv \
+  --outdir outputs/run        # no --model needed — the basis already holds the space
+```
+
+The ranking lands in `outputs/run/*_scores.csv` — the larger a person's
+`Mahalanobis_Dist`, the more unusual their overall response pattern.
+
+### One-shot shortcut
+
+If you don't need the intermediate `items.npz` / `basis.npz`, `analyze-file` can
+do all three stages at once — pass `--model` instead of `--basis-file` and it
+embeds + builds the basis inline (a bit-for-bit identical result):
 
 ```bash
 survey-semantics analyze-file responses.csv \
-  --prompt-file   prompts.csv \
-  --scale-file    scales.csv \
-  --weights-file  weights.csv \
-  --embedding sentence-transformers --model models/bge-m3 \
-  --outdir outputs/run
+  --prompt-file prompts.csv --scale-file scales.csv --weights-file weights.csv \
+  --model models/bge-m3 --outdir outputs/run
 ```
-
-**6. Read the result.** Everything lands in `outputs/run/`; the ranking is
-`*_scores.csv` — the larger a person's `Mahalanobis_Dist`, the more unusual they are.
 
 ### Optional refinements
 
@@ -112,19 +154,10 @@ Full file formats and options: [docs/pipeline_overview.md](docs/pipeline_overvie
 
 ### Variants
 
-- **Embed once, analyze many** (decouple the LLM from the analysis). The item
-  embedding depends only on the prompts, not the responses, so you can run the
-  model once and reuse the result:
-  ```bash
-  survey-semantics embed --prompt-file prompts.csv --model models/bge-m3 --out items.npz \
-    --scale-file scales.csv        # optional: embeds only the embed=true items
-  survey-semantics analyze-file responses.csv --prompt-file prompts.csv \
-    --scale-file scales.csv --weights-file weights.csv --embeddings-file items.npz \
-    --outdir outputs/run          # no --model needed; identical result
-  ```
-  Reusing one embeddings file across waves/cohorts also guarantees they share the
-  same semantic basis. Passing the same `--scale-file` to `embed` keeps `items.npz`
-  aligned to the analyzed (`embed=true`) item set.
+- **Build the basis once, analyze many cohorts.** Stages 1–2 don't depend on
+  responses, so reuse one `basis.npz` across waves/cohorts — they're guaranteed to
+  share the same semantic space. (`--embeddings-file items.npz` is also accepted by
+  `analyze-file` if you'd rather skip the explicit `pca` step but still avoid the model.)
 - **Questionnaires in separate files** (not one merged table): `run-study --data-dir <dir> --prompt-dir <dir>` merges them for you.
 - **Longitudinal / multiple waves** with differing item sets (e.g. NHIS 2021 vs 2024): restrict to common items so the waves share one space, run each, and compare — see the [NHIS example](examples/nhis/README.md).
 
@@ -142,7 +175,7 @@ Add `--skip-umap` to skip UMAP files. Render plots with
 ## Layout
 
 ```text
-src/survey_semantics/   package (io, prompts, scales, embedding, pipeline, combined, cli, plotting)
+src/survey_semantics/   package (io, prompts, scales, embedding, basis, pipeline, combined, cli, plotting)
 tests/                  test suite
 examples/nhis/          NHIS worked example (converter + run script + README)
 docs/                   pipeline_overview.md, env_setup.md

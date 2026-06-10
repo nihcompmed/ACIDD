@@ -97,17 +97,21 @@ Here the space is the **PCA of the question wording's embeddings** — so:
 
 | Module | Lines | Responsibility | Why it exists |
 |---|---|---|---|
-| [`cli.py`](../src/survey_semantics/cli.py) | 349 | Argument parsing; loads prompts/scales; builds `AnalysisConfig`; dispatches `analyze-file` / `analyze-package` / combined; writes outputs. | Single entry point; keeps I/O and orchestration out of the math. |
+| [`cli.py`](../src/survey_semantics/cli.py) | ~390 | Argument parsing; loads prompts/scales; builds `AnalysisConfig`; dispatches the three modular stages (`embed` / `pca` / `analyze-file`) plus `analyze-package` / combined; writes outputs. | Single entry point; keeps I/O and orchestration out of the math. |
 | [`io.py`](../src/survey_semantics/io.py) | 290 | Read survey tables (generic + NDA dictionary-row format); coerce responses to numeric; infer item columns; clean sentinels; build covariate matrix. | All the messy "turn a CSV into clean numeric arrays" logic in one place. |
 | [`prompts.py`](../src/survey_semantics/prompts.py) | 286 | Load item **wording** from CSV/JSON/Python-dict/dir; namespaced key resolution (`table__item` → bare → normalized). | Prompt text is the raw material for the semantic space; must match items robustly across naming styles. |
 | [`scales.py`](../src/survey_semantics/scales.py) | 412 | Load per-item **scale specs** (`min,max,sentinels,reverse,ceiling,embed`); same namespacing as prompts. *(Part 1, new.)* | Lets the tool know each item's valid range, its own missing-value codes, reverse coding, ceiling-audit eligibility, and whether it's in the analyzed set (`embed`) — things it otherwise has to guess from data. |
-| [`embedding.py`](../src/survey_semantics/embedding.py) | ~230 | The **LLM step**, fully decoupled: embed item text via a local `sentence-transformers` model (e.g. bge-m3); save/load a reusable `ItemEmbeddings` artifact; enforce the offline policy. No fallback — a missing model raises. | Isolates the only model dependency so embedding can run once and the PCA/downstream analysis can run with no model. |
-| [`pipeline.py`](../src/survey_semantics/pipeline.py) | 1108 | The core algorithm: `analyze_survey_table` (stages 2–13), dimension selection, residualization, Mahalanobis, stability, drivers, case studies, UMAP. | The heart — everything else feeds it clean inputs and serializes its outputs. |
+| [`embedding.py`](../src/survey_semantics/embedding.py) | ~270 | **Stage 1 (the LLM step)**, fully decoupled: embed item text via a local `sentence-transformers` model (e.g. bge-m3); save/load a reusable `ItemEmbeddings` artifact (`embed` subcommand); enforce the offline policy. No fallback — a missing model raises. | Isolates the only model dependency so embedding can run once and the PCA/downstream analysis can run with no model. |
+| [`basis.py`](../src/survey_semantics/basis.py) | ~200 | **Stage 2 (PCA)**: `build_semantic_basis` centers the item embeddings, runs PCA, and computes the embedding-only D diagnostics (variance/eigengap/parallel); save/load a reusable `SemanticBasis` artifact (`pca` subcommand). | The semantic space depends only on the prompts, so it is a cacheable, response-independent artifact — reuse one basis across waves to guarantee a shared space. |
+| [`pipeline.py`](../src/survey_semantics/pipeline.py) | ~1120 | **Stage 3 + orchestration**: `analyze_survey_table` (build/accept the basis, then project, residualize, Mahalanobis, stability, drivers, case studies, UMAP). | The heart — everything else feeds it clean inputs and serializes its outputs. |
 | [`combined.py`](../src/survey_semantics/combined.py) | 663 | Build a single transdiagnostic matrix across *many* questionnaire files (auto-reverse detection, item merging). | For the "many small instruments → one space" mode; not used for the per-year NHIS runs. |
 | [`plotting.py`](../src/survey_semantics/plotting.py) | 431 | Render PDF plots from the output CSVs. | Optional visualization, decoupled from analysis. |
 
 ### Key `pipeline.py` functions
-- `analyze_survey_table(table, config, item_columns=None)` — the orchestrator (stages 2–13).
+- `analyze_survey_table(table, config, item_columns=None, item_embeddings=None, basis=None)`
+  — the orchestrator. A precomputed `basis` skips embedding **and** PCA; precomputed
+  `item_embeddings` skips only the model; neither embeds + builds the basis inline.
+  The basis itself is built by `basis.build_semantic_basis` (centering + PCA + parallel).
 - `normalize_responses` — scale each item to `[-1,1]` by its range (matching the manuscript; reverse-scored items then negated).
 - `select_component_count` / `eigengap_dimension` / `parallel_analysis` /
   `stability_dimension` / `choose_dimension` — the four **D-selection** rules.
@@ -212,23 +216,37 @@ python -m survey_semantics.cli analyze-file path/to/data.csv \
 > The model must already be on local disk (the pipeline blocks network egress).
 > Tests use a deterministic fake encoder so they run without the model.
 
-### Decoupling the LLM step (embed once, analyze many)
+### The three modular stages (embed → pca → score)
 
-The item embedding (stage 7) depends only on the prompts, not the responses, so
-it is separable from the PCA/downstream analysis. Run the model once and reuse:
+Embedding (stage 7) depends only on the prompts, and the PCA basis only on the
+embeddings — neither touches responses. So both are separable, cacheable stages.
+Run them once and reuse the artifacts:
 
 ```bash
-# LLM step only → a reusable embeddings artifact:
+# Stage 1 — LLM step → reusable embeddings (prompts only):
 python -m survey_semantics.cli embed --prompt-file prompts.csv --model /path/to/bge-m3 --out items.npz
-# Analysis with NO model (PCA + projection + Mahalanobis + …):
+# Stage 2 — PCA → reusable semantic basis (embeddings only, no responses):
+python -m survey_semantics.cli pca --embeddings-file items.npz --out basis.npz
+# Stage 3 — score with NO model (project + Mahalanobis + …):
 python -m survey_semantics.cli analyze-file responses.csv \
   --prompt-file prompts.csv --scale-file scales.csv --weights-file weights.csv \
-  --embeddings-file items.npz --outdir outputs/run
+  --basis-file basis.npz --outdir outputs/run
 ```
 
-The result is bit-identical to embedding inline. Reusing one `items.npz` across
-waves/cohorts also guarantees a shared basis `W`. `ItemEmbeddings.matrix_for`
-raises if any analyzed item lacks an embedding (no silent substitution).
+The result is **bit-identical** to embedding inline (verified on NHIS 2021: max
+abs distance diff `0.0`). You can also stop after stage 1 and pass
+`--embeddings-file items.npz` to `analyze-file` (it builds the basis inline but
+still needs no model). Reusing one `basis.npz` across waves/cohorts guarantees a
+shared basis `W`. Both artifacts validate item alignment and **raise** on any
+missing/extra item — `ItemEmbeddings.matrix_for` and `SemanticBasis.coordinates_for`
+never silently substitute or drop.
+
+Any local sentence-transformers model works the same way (the manuscript used
+bge-m3 as primary and bge-large-en-v1.5 / all-mpnet-base-v2 for sensitivity;
+each model gets its own `items.npz` and its own PCA basis). For models whose
+repo ships custom architecture code (e.g. `gte-large-en-v1.5`), pass the
+explicit `--trust-remote-code` opt-in — the code runs from the already-local
+files and the outbound-socket blocker stays active either way.
 
 ### Worked example — NHIS 2021
 ```bash

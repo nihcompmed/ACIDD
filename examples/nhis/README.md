@@ -83,27 +83,33 @@ so any other survey can be run the same way by writing its own converter. See
 
 ## 3. Analyze each year
 
-The convenience script converts, **embeds the common prompts once** (the only LLM
-step), then analyzes both years from that shared embeddings file — so the years
-provably share one semantic basis and the per-year analyses need no model:
+The convenience script converts, then runs the three modular stages — **embed the
+common prompts once** (the only LLM step) and **build the semantic basis once**
+(PCA, no responses), then analyzes both years from that one shared basis — so the
+years provably share one semantic space and the per-year analyses need no model:
 
 ```bash
 # Requires a local bge-m3 (sentence-transformers) model; there is no fallback.
 MODEL=/path/to/bge-m3 examples/nhis/run_nhis.sh
 ```
 
-Equivalently, by hand — embed once, then analyze each year with `--embeddings-file`:
+Equivalently, by hand — embed once, build the basis once, then score each year
+with `--basis-file`:
 
 ```bash
 python -m survey_semantics.cli embed \
   --prompt-file data/NHIS/2021/nhis2021_prompts.csv \
   --model /path/to/bge-m3 --out outputs/nhis/nhis_items.npz
 
+python -m survey_semantics.cli pca \
+  --embeddings-file outputs/nhis/nhis_items.npz \
+  --out outputs/nhis/nhis_basis.npz --max-components 0
+
 python -m survey_semantics.cli analyze-file data/NHIS/2021/nhis2021.csv \
   --prompt-file   data/NHIS/2021/nhis2021_prompts.csv \
   --scale-file    data/NHIS/2021/nhis2021_scales.csv \
   --weights-file  data/NHIS/2021/nhis2021_weights.csv \
-  --embeddings-file outputs/nhis/nhis_items.npz \
+  --basis-file    outputs/nhis/nhis_basis.npz \
   --id-col HHX \
   --d-selection variance --variance-threshold 0.80 --max-components 0 \
   --skip-umap \

@@ -16,7 +16,7 @@ import pytest
 from unittest import mock
 
 
-def _fake_sentence_transformer_embeddings(texts, model_name=None):
+def _fake_sentence_transformer_embeddings(texts, model_name=None, trust_remote_code=False):
     """Deterministic per-text vectors (seeded by a stable hash of the text)."""
     dim = 64
     out = np.zeros((len(texts), dim), dtype=float)

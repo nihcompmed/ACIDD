@@ -11,6 +11,7 @@ from sklearn.decomposition import PCA
 from sklearn.impute import KNNImputer
 from sklearn.linear_model import LinearRegression
 
+from survey_semantics.basis import SemanticBasis, build_semantic_basis
 from survey_semantics.embedding import (
     ItemEmbeddings,
     embed_texts_with_metadata,
@@ -272,18 +273,22 @@ def analyze_survey_table(
     config: Optional[AnalysisConfig] = None,
     item_columns: Optional[Sequence[str]] = None,
     item_embeddings: Optional[ItemEmbeddings] = None,
+    basis: Optional[SemanticBasis] = None,
 ) -> AnalysisResult:
     """Run semantic manifold analysis for one survey table.
 
-    The LLM embedding of items and the downstream PCA/response analysis are
-    decoupled: pass a precomputed ``item_embeddings`` (from a prior `embed` step)
-    to run everything *without* loading the model. When omitted, items are
-    embedded inline.
+    The three pipeline stages are decoupled. You may pass, in order of precedence:
+
+    - ``basis``: a precomputed :class:`~survey_semantics.basis.SemanticBasis`
+      (from a prior `pca` step) — skips both the model and PCA.
+    - ``item_embeddings``: precomputed item embeddings (from a prior `embed`
+      step) — skips the model; PCA runs here.
+    - neither: items are embedded inline (loads the model), then PCA runs here.
     """
 
     config = config or AnalysisConfig()
     # Network/offline guards are only needed when we actually load the model.
-    if config.disable_network and item_embeddings is None:
+    if config.disable_network and item_embeddings is None and basis is None:
         enforce_local_ai_offline_policy()
         install_outbound_socket_blocker()
 
@@ -408,57 +413,70 @@ def analyze_survey_table(
         for col in item_columns
     ]
 
-    # Item embedding (LLM step) — precomputed or inline. Either way this yields
-    # the item-embedding matrix plus provenance for output naming.
-    if item_embeddings is not None:
-        embedding_vectors = item_embeddings.matrix_for(item_columns)
-        emb_backend = item_embeddings.backend
-        emb_model = item_embeddings.model_name
-        emb_slug = item_embeddings.slug
-        emb_requested_backend = item_embeddings.backend
-        emb_requested_model = item_embeddings.model_name
+    # Stages 1-2 (embed -> PCA). A precomputed basis skips both; precomputed
+    # embeddings skip only the model; otherwise items are embedded inline. Either
+    # way this yields the item coordinates, eigen/variance arrays, the parallel
+    # diagnostic, and the embedding provenance for output naming.
+    if basis is not None:
+        item_coordinates_full = basis.coordinates_for(item_columns)
+        eigenvalues = basis.eigenvalues
+        explained = basis.explained_variance_ratio
+        cumulative = basis.cumulative_variance
+        parallel = basis.parallel
+        max_components = basis.max_components
+        emb_backend = basis.embedding_backend
+        emb_model = basis.embedding_model
+        emb_slug = basis.embedding_slug
+        emb_requested_backend = basis.embedding_backend
+        emb_requested_model = basis.embedding_model
+        basis_source = "precomputed"
     else:
-        embedding_result = embed_texts_with_metadata(
-            item_texts,
-            method=config.embedding,
-            model_name=config.model_name,
+        if item_embeddings is not None:
+            embedding_vectors = item_embeddings.matrix_for(item_columns)
+            emb_backend = item_embeddings.backend
+            emb_model = item_embeddings.model_name
+            emb_slug = item_embeddings.slug
+            emb_requested_backend = item_embeddings.backend
+            emb_requested_model = item_embeddings.model_name
+            basis_source = "computed_from_embeddings"
+        else:
+            embedding_result = embed_texts_with_metadata(
+                item_texts,
+                method=config.embedding,
+                model_name=config.model_name,
+            )
+            embedding_vectors = embedding_result.vectors
+            emb_backend = embedding_result.backend
+            emb_model = embedding_result.model_name
+            emb_slug = embedding_result.slug
+            emb_requested_backend = embedding_result.requested_backend
+            emb_requested_model = embedding_result.requested_model_name
+            basis_source = "computed_inline"
+
+        computed_basis = build_semantic_basis(
+            items=item_columns,
+            embedding_vectors=embedding_vectors,
+            max_components=config.max_components,
+            d_null_permutations=config.d_null_permutations,
+            d_null_percentile=config.d_null_percentile,
+            random_state=config.random_state,
+            embedding_backend=emb_backend,
+            embedding_model=emb_model,
+            embedding_slug=emb_slug,
         )
-        embedding_vectors = embedding_result.vectors
-        emb_backend = embedding_result.backend
-        emb_model = embedding_result.model_name
-        emb_slug = embedding_result.slug
-        emb_requested_backend = embedding_result.requested_backend
-        emb_requested_model = embedding_result.requested_model_name
+        item_coordinates_full = computed_basis.components
+        eigenvalues = computed_basis.eigenvalues
+        explained = computed_basis.explained_variance_ratio
+        cumulative = computed_basis.cumulative_variance
+        parallel = computed_basis.parallel
+        max_components = computed_basis.max_components
 
-    item_embedding_matrix = embedding_vectors - embedding_vectors.mean(axis=0, keepdims=True)
-
-    possible_components = min(item_embedding_matrix.shape[0], item_embedding_matrix.shape[1])
-    if config.max_components and config.max_components > 0:
-        max_components = min(config.max_components, possible_components)
-    else:
-        max_components = possible_components
-    if max_components < 1:
-        raise ValueError("Item text embedding did not produce usable features.")
-
-    pca_full = PCA(n_components=max_components, svd_solver="full")
-    item_coordinates_full = pca_full.fit_transform(item_embedding_matrix)
-    eigenvalues = np.nan_to_num(pca_full.explained_variance_)
-    explained = np.nan_to_num(pca_full.explained_variance_ratio_)
-    cumulative = np.cumsum(explained)
     d_variance, variance_threshold_reached = select_component_count(
         cumulative_variance=cumulative,
         variance_threshold=config.variance_threshold,
         max_components=max_components,
     )
     d_eigengap, eigengap_ratio = eigengap_dimension(eigenvalues)
-    parallel = parallel_analysis(
-        matrix=item_embedding_matrix,
-        observed_eigenvalues=eigenvalues,
-        n_components=max_components,
-        n_permutations=config.d_null_permutations,
-        percentile=config.d_null_percentile,
-        random_state=config.random_state,
-    )
 
     covariate_names = list(config.covariates) if config.covariates is not None else default_covariates(metadata)
     covariates, kept_covariates = build_covariate_matrix(metadata, covariate_names)
@@ -585,6 +603,7 @@ def analyze_survey_table(
         "embedding_slug": emb_slug,
         "requested_embedding": emb_requested_backend,
         "requested_embedding_model": emb_requested_model,
+        "semantic_basis_source": basis_source,
         "explained_variance": float(cumulative[optimal_d - 1]) if cumulative.size else 0.0,
         "variance_threshold": float(config.variance_threshold),
         "variance_threshold_reached": bool(variance_threshold_reached),

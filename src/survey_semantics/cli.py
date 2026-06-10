@@ -7,6 +7,11 @@ from typing import List, Optional
 
 import pandas as pd
 
+from survey_semantics.basis import (
+    build_semantic_basis,
+    load_semantic_basis,
+    save_semantic_basis,
+)
 from survey_semantics.combined import build_combined_package_table
 from survey_semantics.embedding import (
     embed_item_prompts,
@@ -43,6 +48,26 @@ def main(argv: Optional[List[str]] = None) -> int:
              "embed=true items are embedded (matches the analysis item set exactly).",
     )
     embed_parser.add_argument("--scale-dir", type=Path, default=None, help="Directory of per-instrument scale files.")
+    embed_parser.add_argument(
+        "--trust-remote-code", action="store_true",
+        help="Explicit opt-in for models whose repo ships custom architecture code "
+             "(e.g. gte-large-en-v1.5). Code runs from local files only; the "
+             "outbound-socket blocker stays active regardless.",
+    )
+
+    pca_parser = subparsers.add_parser(
+        "pca",
+        help="PCA step only: turn an embeddings file into a reusable semantic basis (no responses).",
+    )
+    pca_parser.add_argument(
+        "--embeddings-file", type=Path, required=True,
+        help="Item embeddings produced by `embed`.",
+    )
+    pca_parser.add_argument("--out", type=Path, required=True, help="Output .npz basis file.")
+    pca_parser.add_argument("--max-components", type=int, default=24, help="Use 0 to evaluate all PCs.")
+    pca_parser.add_argument("--d-null-permutations", type=int, default=50)
+    pca_parser.add_argument("--d-null-percentile", type=float, default=95.0)
+    pca_parser.add_argument("--random-state", type=int, default=42)
 
     file_parser = subparsers.add_parser("analyze-file", help="Analyze one survey table.")
     _add_common_args(file_parser)
@@ -51,6 +76,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     file_parser.add_argument(
         "--embeddings-file", type=Path, default=None,
         help="Use precomputed item embeddings from `embed` (skips the LLM; --model not needed).",
+    )
+    file_parser.add_argument(
+        "--basis-file", type=Path, default=None,
+        help="Use a precomputed semantic basis from `pca` (skips the LLM and PCA; "
+             "--model/--embeddings-file not needed). Must be fit on exactly the analyzed items.",
     )
 
     package_parser = subparsers.add_parser("analyze-package", help="Analyze all viable survey tables in a folder.")
@@ -100,6 +130,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.command == "embed":
         return _embed(args)
+    if args.command == "pca":
+        return _pca(args)
     if args.command == "analyze-file":
         return _analyze_file(args)
     if args.command == "analyze-package":
@@ -268,10 +300,36 @@ def _embed(args: argparse.Namespace) -> int:
             raise SystemExit(
                 "embed: the scale file marks no items embed=true (nothing to embed)."
             )
-    embeddings = embed_item_prompts(prompts, method="sentence-transformers", model_name=args.model)
+    embeddings = embed_item_prompts(
+        prompts, method="sentence-transformers", model_name=args.model,
+        trust_remote_code=getattr(args, "trust_remote_code", False),
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     save_item_embeddings(args.out, embeddings)
     print("Embedded {} items -> {} ({}).".format(len(embeddings.items), args.out, embeddings.slug))
+    return 0
+
+
+def _pca(args: argparse.Namespace) -> int:
+    embeddings = load_item_embeddings(args.embeddings_file)
+    basis = build_semantic_basis(
+        items=embeddings.items,
+        embedding_vectors=embeddings.vectors,
+        max_components=args.max_components,
+        d_null_permutations=args.d_null_permutations,
+        d_null_percentile=args.d_null_percentile,
+        random_state=args.random_state,
+        embedding_backend=embeddings.backend,
+        embedding_model=embeddings.model_name,
+        embedding_slug=embeddings.slug,
+    )
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    save_semantic_basis(args.out, basis)
+    print(
+        "Built semantic basis: {} items, {} PCs -> {} ({}).".format(
+            len(basis.items), basis.max_components, args.out, basis.embedding_slug
+        )
+    )
     return 0
 
 
@@ -314,10 +372,13 @@ def _analyze_file(args: argparse.Namespace) -> int:
     if args.name:
         table.name = args.name
     item_embeddings = None
-    if getattr(args, "embeddings_file", None):
+    basis = None
+    if getattr(args, "basis_file", None):
+        basis = load_semantic_basis(args.basis_file)
+    elif getattr(args, "embeddings_file", None):
         item_embeddings = load_item_embeddings(args.embeddings_file)
     result = analyze_survey_table(
-        table, _config_from_args(args), item_embeddings=item_embeddings
+        table, _config_from_args(args), item_embeddings=item_embeddings, basis=basis,
     )
     _write_result(result, args.outdir, _safe_name(result.table_name))
     _write_summary(pd.DataFrame([result.summary]), args.outdir, result.summary["embedding_slug"])

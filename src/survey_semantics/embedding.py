@@ -58,12 +58,16 @@ def embed_item_prompts(
     prompts: Mapping[str, str],
     method: str = "sentence-transformers",
     model_name: Optional[str] = None,
+    trust_remote_code: bool = False,
 ) -> ItemEmbeddings:
     """Embed an item→wording mapping into a reusable :class:`ItemEmbeddings`."""
 
     items = [str(item) for item in prompts.keys()]
     texts = [str(prompts[item]) for item in prompts.keys()]
-    result = embed_texts_with_metadata(texts, method=method, model_name=model_name)
+    result = embed_texts_with_metadata(
+        texts, method=method, model_name=model_name,
+        trust_remote_code=trust_remote_code,
+    )
     return ItemEmbeddings(
         items=items,
         vectors=result.vectors,
@@ -124,6 +128,7 @@ def embed_texts_with_metadata(
     texts: Sequence[str],
     method: str = "sentence-transformers",
     model_name: Optional[str] = None,
+    trust_remote_code: bool = False,
 ) -> EmbeddingResult:
     """Embed item text and return provenance for output naming.
 
@@ -143,7 +148,9 @@ def embed_texts_with_metadata(
 
     requested_model = model_name or ""
     resolved_model = model_name or "BAAI/bge-m3"
-    vectors = _sentence_transformer_embeddings(texts, resolved_model)
+    vectors = _sentence_transformer_embeddings(
+        texts, resolved_model, trust_remote_code=trust_remote_code
+    )
     backend = "sentence-transformers"
     return EmbeddingResult(
         vectors=vectors,
@@ -165,13 +172,25 @@ def embedding_slug(backend: str, model_name: Optional[str] = None) -> str:
 def _sentence_transformer_embeddings(
     texts: Sequence[str],
     model_name: Optional[str] = None,
+    trust_remote_code: bool = False,
 ) -> np.ndarray:
+    """Encode texts with a local sentence-transformers model.
+
+    ``trust_remote_code`` is an explicit opt-in for models that ship custom
+    architecture code in their repo (e.g. ``gte-large-en-v1.5``). The code runs
+    from the already-downloaded local files and the outbound-socket blocker
+    stays active, so nothing can be fetched at load/encode time either way.
+    """
     enforce_local_ai_offline_policy()
     with block_outbound_sockets():
         from sentence_transformers import SentenceTransformer
 
         try:
-            model = SentenceTransformer(model_name or "BAAI/bge-m3", local_files_only=True)
+            model = SentenceTransformer(
+                model_name or "BAAI/bge-m3",
+                local_files_only=True,
+                trust_remote_code=trust_remote_code,
+            )
         except TypeError as exc:
             raise RuntimeError(
                 "This sentence-transformers version does not expose local_files_only=True. "
