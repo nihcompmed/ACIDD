@@ -48,7 +48,6 @@ class AnalysisConfig:
     umap_metric: str = "euclidean"
     random_state: int = 42
     variance_threshold: float = 0.80
-    max_components: int = 24
     d_selection_method: str = "variance"
     d_null_permutations: int = 50
     d_null_percentile: float = 95.0
@@ -107,22 +106,22 @@ def normalize_responses(
 def select_component_count(
     cumulative_variance: np.ndarray,
     variance_threshold: float,
-    max_components: int,
+    n_components: int,
 ) -> Tuple[int, bool]:
     """Choose the variance-selected PC count.
 
-    If the requested threshold is not reached within the evaluated subspace,
-    use the largest evaluated subspace instead of falling back to one PC.
+    If the threshold is not reached within the full decomposition, fall back to
+    the full set of components instead of one PC.
     """
 
-    if max_components < 1 or cumulative_variance.size == 0 or cumulative_variance[-1] <= 0:
+    if n_components < 1 or cumulative_variance.size == 0 or cumulative_variance[-1] <= 0:
         return 1, False
 
     reached = cumulative_variance >= variance_threshold
     if reached.any():
         selected = int(np.argmax(reached)) + 1
-        return max(1, min(selected, max_components)), True
-    return max_components, False
+        return max(1, min(selected, n_components)), True
+    return n_components, False
 
 
 def leading_true_count(values: Sequence[bool]) -> int:
@@ -227,7 +226,7 @@ def normalize_d_selection_method(method: str) -> str:
         "max": "max",
         "all": "max",
         "all_pcs": "max",
-        "max_components": "max",
+        "all_components": "max",
     }
     normalized = aliases.get(str(method or "variance").strip().lower())
     if normalized is None:
@@ -245,7 +244,7 @@ def choose_dimension(
     d_eigengap: int,
     parallel: Dict[str, object],
     d_stability: int,
-    max_components: int,
+    n_components: int,
 ) -> int:
     """Choose the semantic PC subspace used for scoring."""
 
@@ -264,8 +263,8 @@ def choose_dimension(
     elif normalized == "stability":
         selected = d_stability
     else:
-        selected = max_components
-    return max(1, min(int(selected), int(max_components)))
+        selected = n_components
+    return max(1, min(int(selected), int(n_components)))
 
 
 def analyze_survey_table(
@@ -423,7 +422,7 @@ def analyze_survey_table(
         explained = basis.explained_variance_ratio
         cumulative = basis.cumulative_variance
         parallel = basis.parallel
-        max_components = basis.max_components
+        n_components = basis.n_components
         emb_backend = basis.embedding_backend
         emb_model = basis.embedding_model
         emb_slug = basis.embedding_slug
@@ -456,7 +455,6 @@ def analyze_survey_table(
         computed_basis = build_semantic_basis(
             items=item_columns,
             embedding_vectors=embedding_vectors,
-            max_components=config.max_components,
             d_null_permutations=config.d_null_permutations,
             d_null_percentile=config.d_null_percentile,
             random_state=config.random_state,
@@ -469,12 +467,12 @@ def analyze_survey_table(
         explained = computed_basis.explained_variance_ratio
         cumulative = computed_basis.cumulative_variance
         parallel = computed_basis.parallel
-        max_components = computed_basis.max_components
+        n_components = computed_basis.n_components
 
     d_variance, variance_threshold_reached = select_component_count(
         cumulative_variance=cumulative,
         variance_threshold=config.variance_threshold,
-        max_components=max_components,
+        n_components=n_components,
     )
     d_eigengap, eigengap_ratio = eigengap_dimension(eigenvalues)
 
@@ -485,7 +483,7 @@ def analyze_survey_table(
         item_coordinates_full=item_coordinates_full,
         covariates=covariates,
         alpha=config.alpha,
-        max_components=max_components,
+        n_components=n_components,
         explained_variance=explained,
         weights=weights,
     )
@@ -500,7 +498,7 @@ def analyze_survey_table(
         d_eigengap=d_eigengap,
         parallel=parallel,
         d_stability=d_stability,
-        max_components=max_components,
+        n_components=n_components,
     )
 
     item_coordinates = item_coordinates_full[:, :optimal_d]
@@ -564,7 +562,7 @@ def analyze_survey_table(
         cumulative_variance=cumulative,
         variance_threshold=config.variance_threshold,
         variance_threshold_reached=variance_threshold_reached,
-        max_components=max_components,
+        n_components=n_components,
         d_eigengap=d_eigengap,
         eigengap_ratio=eigengap_ratio,
         parallel=parallel,
@@ -607,14 +605,14 @@ def analyze_survey_table(
         "explained_variance": float(cumulative[optimal_d - 1]) if cumulative.size else 0.0,
         "variance_threshold": float(config.variance_threshold),
         "variance_threshold_reached": bool(variance_threshold_reached),
-        "max_components_evaluated": int(max_components),
+        "components_evaluated": int(n_components),
         "d_selection_method": normalize_d_selection_method(config.d_selection_method),
         "d_variance_selected": int(d_variance),
         "d_eigengap": int(d_eigengap),
         "eigengap_ratio": float(eigengap_ratio) if not pd.isna(eigengap_ratio) else pd.NA,
         "d_parallel_analysis": parallel["selected_d"],
         "parallel_analysis_stop_reached": bool(
-            (not pd.isna(parallel["selected_d"])) and int(parallel["selected_d"]) < max_components
+            (not pd.isna(parallel["selected_d"])) and int(parallel["selected_d"]) < n_components
         ),
         "parallel_null_permutations": int(config.d_null_permutations),
         "parallel_null_percentile": float(config.d_null_percentile),
@@ -983,14 +981,14 @@ def _stability_frame(
     item_coordinates_full: np.ndarray,
     covariates: np.ndarray,
     alpha: float,
-    max_components: int,
+    n_components: int,
     explained_variance: np.ndarray,
     weights: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
     records = []
     previous = set()
     cumulative = np.cumsum(explained_variance)
-    for dim in range(1, max_components + 1):
+    for dim in range(1, n_components + 1):
         scores = np.dot(response_norm, item_coordinates_full[:, :dim])
         residual = residualize(scores, covariates, weights=weights)
         distances = mahalanobis_distances(residual, weights=weights)
@@ -1061,7 +1059,7 @@ def _dimension_methods_frame(
     cumulative_variance: np.ndarray,
     variance_threshold: float,
     variance_threshold_reached: bool,
-    max_components: int,
+    n_components: int,
     d_eigengap: int,
     eigengap_ratio: float,
     parallel: Dict[str, object],
@@ -1073,7 +1071,7 @@ def _dimension_methods_frame(
     variance_at_selected = float(cumulative_variance[optimal_d - 1]) if cumulative_variance.size else 0.0
     variance_at_variance_d = float(cumulative_variance[d_variance - 1]) if cumulative_variance.size else 0.0
     parallel_d = parallel["selected_d"]
-    parallel_stop_reached = (not pd.isna(parallel_d)) and int(parallel_d) < max_components
+    parallel_stop_reached = (not pd.isna(parallel_d)) and int(parallel_d) < n_components
     parallel_detail = (
         "leading PCs above null percentile"
         if not pd.isna(parallel_d)
@@ -1087,7 +1085,7 @@ def _dimension_methods_frame(
             "criterion_threshold": float(variance_threshold),
             "criterion_reached": bool(variance_threshold_reached),
             "used_for_scores": selection_method == "variance",
-            "details": "first cumulative variance crossing; max_components if not reached",
+            "details": "first cumulative variance crossing; all components if not reached",
         },
         {
             "method": "eigengap_ratio",
@@ -1105,7 +1103,7 @@ def _dimension_methods_frame(
             "criterion_threshold": float(config.d_null_percentile),
             "criterion_reached": bool(parallel_stop_reached),
             "used_for_scores": selection_method == "parallel",
-            "details": "{}; permutations={}; stop reached before max_components={}".format(
+            "details": "{}; permutations={}; stop reached before all components={}".format(
                 parallel_detail,
                 config.d_null_permutations,
                 bool(parallel_stop_reached),
@@ -1118,18 +1116,18 @@ def _dimension_methods_frame(
             "criterion_threshold": float(config.stability_jaccard_threshold),
             "criterion_reached": bool(stability_reached),
             "used_for_scores": selection_method == "stability",
-            "details": "first D with neighboring-D Jaccard stable for {} step(s); max_components if not reached".format(
+            "details": "first D with neighboring-D Jaccard stable for {} step(s); all components if not reached".format(
                 config.stability_consecutive
             ),
         },
         {
-            "method": "max_components",
-            "selected_d": int(max_components),
+            "method": "all_components",
+            "selected_d": int(n_components),
             "criterion_value": pd.NA,
             "criterion_threshold": pd.NA,
             "criterion_reached": True,
             "used_for_scores": selection_method == "max",
-            "details": "largest evaluated semantic subspace",
+            "details": "the full semantic subspace (all components)",
         },
         {
             "method": "selected_for_scores",

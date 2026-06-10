@@ -85,8 +85,9 @@ the dimension diagnostics** — the cumulative-variance curve, the eigengaps, an
 parallel-analysis null. It deliberately does **not** pick a working dimension `D`;
 that is a stage-3 choice (below). No responses are involved, so the basis is fixed
 by the prompts alone — reuse one `basis.npz` across waves and they share it.
-(`--d-null-permutations` / `--d-null-percentile` configure the parallel-analysis
-null computed here; `--max-components` caps how many PCs to keep.)
+(`pca` always keeps **all** PCs — the full decomposition — so the dimension choice
+stays entirely open for stage 3. `--d-null-permutations` / `--d-null-percentile`
+configure the parallel-analysis null computed here.)
 
 ### Stage 3 — score: select D, then rank outliers (responses, scales, weights enter here)
 

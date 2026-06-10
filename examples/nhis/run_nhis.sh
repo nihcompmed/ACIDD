@@ -53,7 +53,7 @@ python -m survey_semantics.cli embed \
 
 echo "==> 3/4  Build the shared semantic basis once (PCA, no responses)"
 python -m survey_semantics.cli pca \
-  --embeddings-file "$EMB" --out "$BASIS" --max-components 0
+  --embeddings-file "$EMB" --out "$BASIS"
 
 for YEAR in 2021 2024; do
   echo "==> 4/4  Analyze NHIS $YEAR (no model — from the shared basis)"
@@ -63,7 +63,7 @@ for YEAR in 2021 2024; do
     --weights-file  "$DATA_DIR/$YEAR/nhis${YEAR}_weights.csv" \
     --basis-file    "$BASIS" \
     --id-col HHX \
-    --d-selection variance --variance-threshold 0.80 --max-components 0 \
+    --d-selection variance --variance-threshold 0.80 \
     --pan-mild --empirical-percentiles 95 99 \
     --skip-umap \
     --outdir "$OUTDIR/$YEAR"

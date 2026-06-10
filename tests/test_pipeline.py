@@ -28,7 +28,7 @@ class PipelineTests(unittest.TestCase):
         selected, reached = select_component_count(
             np.asarray([0.18, 0.31, 0.42]),
             variance_threshold=0.80,
-            max_components=3,
+            n_components=3,
         )
         self.assertEqual(selected, 3)
         self.assertFalse(reached)
@@ -37,7 +37,7 @@ class PipelineTests(unittest.TestCase):
         selected, reached = select_component_count(
             np.asarray([0.18, 0.81, 0.91]),
             variance_threshold=0.80,
-            max_components=3,
+            n_components=3,
         )
         self.assertEqual(selected, 2)
         self.assertTrue(reached)
@@ -80,7 +80,6 @@ class PipelineTests(unittest.TestCase):
                     compute_umap=False,
                     min_rows=5,
                     min_items=5,
-                    max_components=5,
                     covariates=["interview_age", "sex"],
                 ),
             )
@@ -141,7 +140,7 @@ class PipelineTests(unittest.TestCase):
             result = analyze_survey_table(
                 table,
                 AnalysisConfig(
-                    compute_umap=False, min_rows=5, min_items=5, max_components=5,
+                    compute_umap=False, min_rows=5, min_items=5,
                     covariates=["interview_age", "sex"],
                     item_scales=load_scale_sources(scale_file=scale_path),
                 ),
@@ -176,14 +175,13 @@ class PipelineTests(unittest.TestCase):
                     compute_umap=False,
                     min_rows=5,
                     min_items=5,
-                    max_components=0,
                     d_selection_method="max",
                 ),
             )
 
             self.assertEqual(result.summary["d_selection_method"], "max")
-            self.assertEqual(result.summary["optimal_d"], result.summary["max_components_evaluated"])
-            selected = result.dimension_methods[result.dimension_methods["method"] == "max_components"]
+            self.assertEqual(result.summary["optimal_d"], result.summary["components_evaluated"])
+            selected = result.dimension_methods[result.dimension_methods["method"] == "all_components"]
             self.assertTrue(bool(selected.iloc[0]["used_for_scores"]))
 
 

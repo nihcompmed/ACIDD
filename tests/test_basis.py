@@ -30,13 +30,13 @@ def _basis(items, **kw):
 
 
 def test_basis_npz_roundtrip(tmp_path):
-    basis = _basis(["a", "b", "c"], max_components=0, d_null_permutations=5)
+    basis = _basis(["a", "b", "c"], d_null_permutations=5)
     path = tmp_path / "b.npz"
     save_semantic_basis(path, basis)
     back = load_semantic_basis(path)
 
     assert back.items == basis.items
-    assert back.max_components == basis.max_components
+    assert back.n_components == basis.n_components
     assert back.embedding_slug == basis.embedding_slug
     assert np.allclose(back.components, basis.components)
     assert np.allclose(back.eigenvalues, basis.eigenvalues)
@@ -46,7 +46,7 @@ def test_basis_npz_roundtrip(tmp_path):
 
 
 def test_coordinates_for_reorders_and_validates():
-    basis = _basis(["a", "b", "c"], max_components=0, d_null_permutations=0)
+    basis = _basis(["a", "b", "c"], d_null_permutations=0)
     out = basis.coordinates_for(["c", "a", "b"])
     assert np.allclose(out, basis.components[[2, 0, 1]])
 
@@ -71,7 +71,7 @@ def _config(tmp_path):
     scales = load_scale_sources(scale_file=_scales(tmp_path))
     return AnalysisConfig(
         compute_umap=False, item_scales=scales, d_selection_method="variance",
-        max_components=0, d_null_permutations=0, id_col="id",
+        d_null_permutations=0, id_col="id",
     )
 
 
@@ -90,7 +90,7 @@ def test_precomputed_basis_matches_inline(tmp_path):
     config = _config(tmp_path)
 
     inline = analyze_survey_table(table, config)
-    basis = _basis(ITEMS, max_components=0, d_null_permutations=0)
+    basis = _basis(ITEMS, d_null_permutations=0)
     viabasis = analyze_survey_table(table, config, basis=basis)
 
     assert inline.summary["semantic_basis_source"] == "computed_inline"
@@ -109,6 +109,6 @@ def test_basis_item_mismatch_raises(tmp_path):
     """A basis fit on a different item set is rejected, not silently misused."""
     table = _table()
     config = _config(tmp_path)
-    wrong_basis = _basis(ITEMS[:-1] + ["Z"], max_components=0, d_null_permutations=0)
+    wrong_basis = _basis(ITEMS[:-1] + ["Z"], d_null_permutations=0)
     with pytest.raises(ValueError):
         analyze_survey_table(table, config, basis=wrong_basis)

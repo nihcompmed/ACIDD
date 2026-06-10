@@ -34,12 +34,12 @@ class SemanticBasis:
     """
 
     items: List[str]
-    components: np.ndarray              # (len(items), max_components) item coordinates
+    components: np.ndarray              # (len(items), n_components) item coordinates — full decomposition
     eigenvalues: np.ndarray
     explained_variance_ratio: np.ndarray
     cumulative_variance: np.ndarray
     parallel: Dict[str, object]         # selected_d, null_mean, null_percentile, significant
-    max_components: int
+    n_components: int                   # number of PCs in the basis (always the full decomposition)
     embedding_backend: str
     embedding_model: str
     embedding_slug: str
@@ -79,7 +79,6 @@ class SemanticBasis:
 def build_semantic_basis(
     items: Sequence[str],
     embedding_vectors: np.ndarray,
-    max_components: int = 24,
     d_null_permutations: int = 50,
     d_null_percentile: float = 95.0,
     random_state: int = 42,
@@ -87,7 +86,9 @@ def build_semantic_basis(
     embedding_model: str = "",
     embedding_slug: str = "",
 ) -> SemanticBasis:
-    """Center the item embeddings, run PCA, and compute embedding-only D diagnostics."""
+    """Center the item embeddings, run the **full** PCA, and compute the
+    embedding-only D diagnostics. The basis always keeps every component — the
+    dimension is chosen later, at score time, via ``--d-selection``."""
 
     # Lazy import avoids a circular import: pipeline imports this module.
     from survey_semantics.pipeline import parallel_analysis
@@ -95,11 +96,7 @@ def build_semantic_basis(
     vectors = np.asarray(embedding_vectors, dtype=float)
     centered = vectors - vectors.mean(axis=0, keepdims=True)
 
-    possible_components = min(centered.shape[0], centered.shape[1])
-    if max_components and max_components > 0:
-        n_components = min(int(max_components), possible_components)
-    else:
-        n_components = possible_components
+    n_components = min(centered.shape[0], centered.shape[1])
     if n_components < 1:
         raise ValueError("Item text embedding did not produce usable features.")
 
@@ -123,7 +120,7 @@ def build_semantic_basis(
         explained_variance_ratio=explained,
         cumulative_variance=cumulative,
         parallel=parallel,
-        max_components=n_components,
+        n_components=n_components,
         embedding_backend=embedding_backend,
         embedding_model=embedding_model,
         embedding_slug=embedding_slug,
@@ -153,7 +150,7 @@ def save_semantic_basis(path: Path, basis: SemanticBasis) -> None:
         parallel_selected_d=np.array([selected_d_value], dtype=float),
         meta=np.array([basis.embedding_backend, basis.embedding_model, basis.embedding_slug]),
         params=np.array(
-            [basis.max_components, basis.d_null_permutations,
+            [basis.n_components, basis.d_null_permutations,
              basis.d_null_percentile, basis.random_state],
             dtype=float,
         ),
@@ -167,7 +164,7 @@ def load_semantic_basis(path: Path) -> SemanticBasis:
 
     data = np.load(Path(path))
     backend, model_name, slug = (str(x) for x in data["meta"])
-    max_components, d_null_perm, d_null_pct, random_state = data["params"]
+    _n_components, d_null_perm, d_null_pct, random_state = data["params"]
     selected_d_raw = float(data["parallel_selected_d"][0])
     selected_d = pd.NA if np.isnan(selected_d_raw) else int(selected_d_raw)
     parallel = {
@@ -183,7 +180,7 @@ def load_semantic_basis(path: Path) -> SemanticBasis:
         explained_variance_ratio=np.asarray(data["explained_variance_ratio"], dtype=float),
         cumulative_variance=np.asarray(data["cumulative_variance"], dtype=float),
         parallel=parallel,
-        max_components=int(max_components),
+        n_components=int(data["components"].shape[1]),
         embedding_backend=backend,
         embedding_model=model_name,
         embedding_slug=slug,

@@ -103,7 +103,7 @@ python -m survey_semantics.cli embed \
 
 python -m survey_semantics.cli pca \
   --embeddings-file outputs/nhis/nhis_items.npz \
-  --out outputs/nhis/nhis_basis.npz --max-components 0
+  --out outputs/nhis/nhis_basis.npz
 
 python -m survey_semantics.cli analyze-file data/NHIS/2021/nhis2021.csv \
   --prompt-file   data/NHIS/2021/nhis2021_prompts.csv \
@@ -111,7 +111,7 @@ python -m survey_semantics.cli analyze-file data/NHIS/2021/nhis2021.csv \
   --weights-file  data/NHIS/2021/nhis2021_weights.csv \
   --basis-file    outputs/nhis/nhis_basis.npz \
   --id-col HHX \
-  --d-selection variance --variance-threshold 0.80 --max-components 0 \
+  --d-selection variance --variance-threshold 0.80 \
   --skip-umap \
   --outdir outputs/nhis/2021
 # → Analyzed nhis2021: 29372 rows, 38 items, D=14 (bge-m3).

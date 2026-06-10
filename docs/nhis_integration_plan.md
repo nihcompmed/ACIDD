@@ -207,7 +207,7 @@ survey-semantics analyze-file data/NHIS/2021/nhis2021.csv \
   --id-col       HHX \
   --embedding sentence-transformers --model /path/to/bge-m3 \
   --d-selection variance --variance-threshold 0.80 \
-  --max-components 0 \
+  --skip-umap \
   --outdir outputs/nhis/2021
 ```
 (and the same for 2024). Use the

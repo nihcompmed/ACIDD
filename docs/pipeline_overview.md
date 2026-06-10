@@ -207,7 +207,6 @@ python -m survey_semantics.cli analyze-file path/to/data.csv \
   --id-col       <ID_COLUMN> \
   --embedding    sentence-transformers --model /path/to/bge-m3 \
   --d-selection  variance --variance-threshold 0.80 \
-  --max-components 0 \                         # 0 = evaluate all prompt PCs
   --outdir outputs/<study>
 ```
 
@@ -255,7 +254,7 @@ python -m survey_semantics.cli analyze-file data/NHIS/2021/nhis2021.csv \
   --scale-file   data/NHIS/2021/nhis2021_scales.csv \
   --weights-file data/NHIS/2021/nhis2021_weights.csv \
   --id-col HHX --embedding sentence-transformers --model /path/to/bge-m3 \
-  --d-selection variance --variance-threshold 0.80 --max-components 0 \
+  --d-selection variance --variance-threshold 0.80 \
   --skip-umap --outdir outputs/nhis/2021
 # → Analyzed nhis2021: ... rows, 38 items, D=...
 ```

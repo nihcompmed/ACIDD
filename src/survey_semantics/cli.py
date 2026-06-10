@@ -64,7 +64,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Item embeddings produced by `embed`.",
     )
     pca_parser.add_argument("--out", type=Path, required=True, help="Output .npz basis file.")
-    pca_parser.add_argument("--max-components", type=int, default=24, help="Use 0 to evaluate all PCs.")
     pca_parser.add_argument("--d-null-permutations", type=int, default=50)
     pca_parser.add_argument("--d-null-percentile", type=float, default=95.0)
     pca_parser.add_argument("--random-state", type=int, default=42)
@@ -194,7 +193,6 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--min-items", type=int, default=5)
     parser.add_argument("--max-unique", type=int, default=8)
     parser.add_argument("--variance-threshold", type=float, default=0.80)
-    parser.add_argument("--max-components", type=int, default=24, help="Use 0 to evaluate all possible prompt PCs.")
     parser.add_argument(
         "--d-selection",
         default="variance",
@@ -238,7 +236,6 @@ def _config_from_args(args: argparse.Namespace) -> AnalysisConfig:
         min_items=args.min_items,
         max_unique=args.max_unique,
         variance_threshold=args.variance_threshold,
-        max_components=args.max_components,
         d_selection_method=args.d_selection,
         d_null_permutations=args.d_null_permutations,
         d_null_percentile=args.d_null_percentile,
@@ -315,7 +312,6 @@ def _pca(args: argparse.Namespace) -> int:
     basis = build_semantic_basis(
         items=embeddings.items,
         embedding_vectors=embeddings.vectors,
-        max_components=args.max_components,
         d_null_permutations=args.d_null_permutations,
         d_null_percentile=args.d_null_percentile,
         random_state=args.random_state,
@@ -327,7 +323,7 @@ def _pca(args: argparse.Namespace) -> int:
     save_semantic_basis(args.out, basis)
     print(
         "Built semantic basis: {} items, {} PCs -> {} ({}).".format(
-            len(basis.items), basis.max_components, args.out, basis.embedding_slug
+            len(basis.items), basis.n_components, args.out, basis.embedding_slug
         )
     )
     return 0
