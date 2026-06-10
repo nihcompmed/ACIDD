@@ -44,15 +44,17 @@ its own inputs** — so the expensive model step is decoupled from the analysis:
 
 ```text
 Stage 1 · embed    prompts.csv ──────────────► items.npz    (question wording only)
-Stage 2 · pca      items.npz ───────────────► basis.npz     (embeddings only → the semantic space)
-Stage 3 · score    basis.npz + responses.csv + scales.csv + weights.csv ──► ranked outliers
+Stage 2 · pca      items.npz ───────────────► basis.npz     (embeddings only → PCA + dimension diagnostics)
+Stage 3 · score    basis.npz + responses.csv + scales.csv + weights.csv ──► select D, then rank outliers
 ```
 
-The semantic space is built from the **meaning of the questions**, so the
+The coordinate system is built from the **meaning of the questions**, so the
 embedding (stage 1) and the PCA basis (stage 2) depend only on the prompts — never
-on anyone's answers. Responses, scales, and reverse-scoring enter only at stage 3.
-Stages 1–2 are deterministic, so the same prompts always yield the same basis: you
-can build it once and reuse it across waves/cohorts to guarantee a shared space.
+on anyone's answers. Stage 2 produces the **full** PCA decomposition plus the
+*dimension diagnostics*; it does **not** yet commit to a working dimension `D`. The
+responses, scales, reverse-scoring — and the **choice of `D`** — all enter at
+stage 3. Stages 1–2 are deterministic, so the same prompts always yield the same
+basis: build it once and reuse it across waves/cohorts to guarantee a shared space.
 
 ### Stage 1 — embed (needs only the prompts)
 
@@ -72,17 +74,28 @@ survey-semantics embed --prompt-file prompts.csv --model models/bge-m3 --out ite
 `items.npz` is a reusable embedding artifact (one vector per item). It depends
 only on the wording — reuse it for every cohort that shares these questions.
 
-### Stage 2 — pca (needs only the embeddings)
+### Stage 2 — pca: decomposition + dimension diagnostics (needs only the embeddings)
 
 ```bash
 survey-semantics pca --embeddings-file items.npz --out basis.npz
 ```
 
-`basis.npz` **is** the semantic space: the PCA of the item embeddings plus the
-dimension diagnostics. No responses are involved, so it is fixed by the prompts
-alone — reusing one `basis.npz` across waves guarantees they share the same basis.
+`basis.npz` holds the **full** PCA of the item embeddings (every component) **plus
+the dimension diagnostics** — the cumulative-variance curve, the eigengaps, and the
+parallel-analysis null. It deliberately does **not** pick a working dimension `D`;
+that is a stage-3 choice (below). No responses are involved, so the basis is fixed
+by the prompts alone — reuse one `basis.npz` across waves and they share it.
+(`--d-null-permutations` / `--d-null-percentile` configure the parallel-analysis
+null computed here; `--max-components` caps how many PCs to keep.)
 
-### Stage 3 — score (responses, scales, weights enter here)
+### Stage 3 — score: select D, then rank outliers (responses, scales, weights enter here)
+
+This stage first **chooses the working dimension `D`**, then projects the
+responses into those `D` semantic axes, removes covariates, and ranks outliers.
+`--d-selection` picks the rule: `variance` (default), `eigengap`, `parallel`, and
+`max` read `D` straight from the basis's diagnostics; `stability` derives it from
+the flagged outlier sets, so it needs the responses — which is why `D` selection
+lives here, not in stage 2. One basis serves every rule.
 
 **`responses.csv`** — one row per person: an id, optional `age`/`sex`, then one
 column per item (names match the `item` keys above):
@@ -127,7 +140,8 @@ survey-semantics analyze-file responses.csv \
   --scale-file    scales.csv \
   --weights-file  weights.csv \
   --prompt-file   prompts.csv \
-  --outdir outputs/run        # no --model needed — the basis already holds the space
+  --d-selection   variance \   # choose D here: variance|eigengap|parallel|stability|max
+  --outdir outputs/run         # no --model needed — the basis holds the decomposition
 ```
 
 The ranking lands in `outputs/run/*_scores.csv` — the larger a person's
@@ -148,7 +162,9 @@ survey-semantics analyze-file responses.csv \
 ### Optional refinements
 
 - **`--pan-mild`** — also flag below-ceiling outliers (adds `At_Ceiling`, `Is_Pan_Mild_Emp<pct>`).
-- **`--d-selection`** — choose the dimension rule (`variance` default, `eigengap`, `parallel`, `stability`, `max`).
+
+(The dimension rule, `--d-selection`, is part of stage 3 above — `variance`
+default, plus `eigengap` / `parallel` / `stability` / `max`.)
 
 Full file formats and options: [docs/pipeline_overview.md](docs/pipeline_overview.md).
 
