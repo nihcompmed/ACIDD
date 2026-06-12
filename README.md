@@ -1,4 +1,4 @@
-# Survey Semantics
+# ACIDD: Auditable Cross-Instrument Distress Detection
 
 Reusable implementation of **Periwal, *"Auditable cross-instrument detection of
 unusual multivariate response configurations using a semantically aligned
